@@ -87,15 +87,33 @@ export default function MuseumCollectionsPage() {
                 </Text>
 
                 <TouchableOpacity
-                  onPress={() => router.push("/camera")}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/collections/[collectionId]",
+                      params: {
+                        collectionId: item.id,
+                        name: item.name,
+                        museumId: String(museumId),
+                        ...(params.name
+                          ? { museumName: String(params.name) }
+                          : {}),
+                        ...(params.image
+                          ? { image: String(params.image) }
+                          : {}),
+                        ...(params.address
+                          ? { address: String(params.address) }
+                          : {}),
+                      },
+                    })
+                  }
                   className="bg-blue-500 px-3 py-1 rounded"
                 >
-                  <Text className="text-white font-semibold">Scan & Chat</Text>
+                  <Text className="text-white font-semibold">View All</Text>
                 </TouchableOpacity>
               </View>
 
               <FlatList
-                data={item.artworks}
+                data={item.artworks.slice(0, 3)}
                 keyExtractor={(a) => a.id}
                 horizontal
                 showsHorizontalScrollIndicator={false}

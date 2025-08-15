@@ -79,6 +79,7 @@ export default function Layout() {
         options={{
           title: "Scan & Chat",
           headerShown: false,
+          tabBarStyle: { display: "none" },
           tabBarIcon: ({ focused }) => (
             <TabIcon
               focused={focused}
@@ -100,6 +101,14 @@ export default function Layout() {
       />
       <Tabs.Screen
         name="museums/[museumId]"
+        options={{
+          href: null,
+          headerShown: false,
+        }}
+      />
+
+      <Tabs.Screen
+        name="collections/[collectionId]"
         options={{
           href: null,
           headerShown: false,

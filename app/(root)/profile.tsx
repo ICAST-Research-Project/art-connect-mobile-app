@@ -30,6 +30,14 @@ const Profile = () => {
             <Text className="text-white text-lg font-semibold">Sign Out</Text>
           </TouchableOpacity>
         </View>
+        <View className="flex items-center mt-6 gap-2">
+          <Text className="font-bold">
+            Feel free to contact if you have any questions?
+          </Text>
+          <Text className="font-medium text-gray-500">
+            Email: ourchidlab@gmail.com
+          </Text>
+        </View>
       </SignedIn>
     </View>
   );

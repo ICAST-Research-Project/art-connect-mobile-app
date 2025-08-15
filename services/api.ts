@@ -15,6 +15,12 @@ export type Collection = {
   }[];
 };
 
+export type CollectionDetail = {
+  id: string;
+  name: string;
+  artworks: { id: string; title: string; images: string[] }[];
+};
+
 const BASE = process.env.EXPO_PUBLIC_API_URL;
 
 export const fetchMuseums = async ({ query }: { query: string }) => {
@@ -36,4 +42,15 @@ export const fetchCollections = async (museumId: string) => {
   if (!res.ok) throw new Error(`Failed to fetch collections: ${res.status}`);
   const data: Collection[] = await res.json();
   return data;
+};
+
+export const fetchCollectionById = async (collectionId: string) => {
+  if (!collectionId) throw new Error("collectionId is required");
+  const endpoint = `${BASE}/api/collections/${collectionId}`;
+  const res = await fetch(endpoint);
+  if (!res.ok) {
+    console.error("Bad response:", res.status, await res.text());
+    throw new Error(`Failed to fetch collection: ${res.status}`);
+  }
+  return res.json();
 };
