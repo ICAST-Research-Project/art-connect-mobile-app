@@ -1,6 +1,7 @@
 import { SignedIn, useAuth, useUser } from "@clerk/clerk-expo";
+import { router } from "expo-router";
 import React from "react";
-import { Text, View, Image, TouchableOpacity } from "react-native";
+import { Image, Text, TouchableOpacity, View } from "react-native";
 
 const Profile = () => {
   const { user } = useUser();
@@ -8,7 +9,10 @@ const Profile = () => {
   return (
     <View>
       <SignedIn>
-        <View>
+        <View className="px-6 pt-6 pb-4">
+          <TouchableOpacity onPress={() => router.back()} className="mb-3">
+            <Text className="text-blue-600">← Back</Text>
+          </TouchableOpacity>
           <View className="flex items-center gap-4 mt-4 mb-4">
             <Text>Full Name: {user?.fullName}</Text>
             <Text>Email: {user?.emailAddresses[0].emailAddress}</Text>
@@ -22,12 +26,12 @@ const Profile = () => {
             )}
           </View>
         </View>
-        <View className="flex items-center mt-4">
+        <View className="flex items-center">
           <TouchableOpacity
-            className="bg-red-500 px-6 py-3 rounded-lg"
+            className="bg-red-500 px-2 py-2 rounded-lg"
             onPress={() => signOut()}
           >
-            <Text className="text-white text-lg font-semibold">Sign Out</Text>
+            <Text className="text-white text-lg font-semibold">Log out</Text>
           </TouchableOpacity>
         </View>
         <View className="flex items-center mt-6 gap-2">
@@ -37,6 +41,9 @@ const Profile = () => {
           <Text className="font-medium text-gray-500">
             Email: ourchidlab@gmail.com
           </Text>
+        </View>
+        <View className="px-6 pt-6">
+          <Text>Show Chat History</Text>
         </View>
       </SignedIn>
     </View>

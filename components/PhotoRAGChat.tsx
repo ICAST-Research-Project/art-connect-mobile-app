@@ -1,42 +1,31 @@
+import { AntDesign, MaterialCommunityIcons } from "@expo/vector-icons";
+import { CameraCapturedPicture } from "expo-camera";
+import { router } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  Image,
-  TouchableOpacity,
-  TextInput,
   Animated,
-  PanResponder,
   Dimensions,
+  Image,
   Keyboard,
+  PanResponder,
   Platform,
   ScrollView,
-  Alert,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { CameraCapturedPicture } from "expo-camera";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import {
-  AntDesign,
-  Fontisto,
-  MaterialCommunityIcons,
-} from "@expo/vector-icons";
-import { router } from "expo-router";
-import {
-  useAudioRecorder,
-  useAudioRecorderState,
-  RecordingPresets,
-  AudioModule,
-  setAudioModeAsync,
-} from "expo-audio";
+import VoiceRAGChat from "./VoiceRAGChat";
 
 type Props = {
   photo: CameraCapturedPicture;
   onOpenCamera?: () => void;
-  onMicPress?: () => void;
+  onMicPress?: () => void; // (optional) still supported if you want to intercept
   onSendMessage?: (msg: string) => void;
   handleRetakePhoto?: () => void;
 };
@@ -59,11 +48,13 @@ const PhotoRAGChat = ({
   onOpenCamera,
   onSendMessage,
   handleRetakePhoto,
+  onMicPress,
 }: Props) => {
   const insets = useSafeAreaInsets();
   const openCamera = onOpenCamera ?? handleRetakePhoto;
 
   const [text, setText] = useState("");
+  const [voiceVisible, setVoiceVisible] = useState(false);
 
   const translateY = useRef(new Animated.Value(TRANSLATE_COLLAPSED)).current;
   const dragStart = useRef(TRANSLATE_COLLAPSED);
@@ -178,98 +169,19 @@ const PhotoRAGChat = ({
     }).start(() => (dragStart.current = TRANSLATE_MID));
   };
 
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recState = useAudioRecorderState(audioRecorder);
-
-  const mmss = useMemo(() => {
-    const ms = recState.durationMillis ?? 0;
-    const m = Math.floor(ms / 60000);
-    const s = Math.floor((ms % 60000) / 1000);
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  }, [recState.durationMillis]);
-
-  useEffect(() => {
-    (async () => {
-      const status = await AudioModule.requestRecordingPermissionsAsync();
-      if (!status.granted) {
-        Alert.alert("Microphone permission is required to record.");
-        return;
-      }
-      await setAudioModeAsync({
-        playsInSilentMode: true,
-        allowsRecording: true,
-      });
-    })();
-  }, []);
-
-  const onAudioRecorded = (uri: string) => {
-    // TODO: upload or send to RAG endpoint
-    console.log("Recorded file:", uri);
+  const handleMicPress = () => {
+    // If parent provided custom behavior, call it; otherwise show the voice sheet
+    onMicPress?.();
+    setVoiceVisible(true);
   };
 
-  const [voiceVisible, setVoiceVisible] = useState(false);
-  const micPulse = useRef(new Animated.Value(1)).current;
-
-  const startPulse = () => {
-    micPulse.setValue(1);
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(micPulse, {
-          toValue: 1.2,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(micPulse, {
-          toValue: 0.9,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-  };
-
-  const stopPulse = () => {
-    micPulse.stopAnimation();
-    micPulse.setValue(1);
-  };
-
-  const stopRecordingNow = async () => {
-    try {
-      if (recState.isRecording) {
-        await audioRecorder.stop();
-      }
-    } catch (e) {
-      console.warn("Stop failed:", e);
-    } finally {
-      stopPulse();
-      setVoiceVisible(false);
-      if (audioRecorder.uri) onAudioRecorded(audioRecorder.uri);
-    }
-  };
-
-  const cancelRecording = async () => {
-    try {
-      if (recState.isRecording) {
-        await audioRecorder.stop();
-      }
-    } catch {}
-    stopPulse();
+  const handleVoiceClose = () => {
     setVoiceVisible(false);
   };
 
-  const onMicPress = async () => {
-    try {
-      if (recState.isRecording) {
-        await stopRecordingNow();
-      } else {
-        await audioRecorder.prepareToRecordAsync();
-        audioRecorder.record();
-        setVoiceVisible(true);
-        startPulse();
-      }
-    } catch (e) {
-      console.warn("Audio record error:", e);
-    }
+  const handleVoiceRecorded = (uri: string) => {
+    // TODO: upload or pipe to RAG speech-to-text
+    console.log("Recorded file:", uri);
   };
 
   return (
@@ -284,14 +196,12 @@ const PhotoRAGChat = ({
           style={styles.closeButton}
           onPress={() => {
             if (voiceVisible) {
-              cancelRecording();
+              // closes the sheet (which also stops recording)
+              handleVoiceClose();
               return;
             }
-            if (openCamera) {
-              openCamera();
-            } else {
-              router.replace("/camera");
-            }
+            if (openCamera) openCamera();
+            else router.replace("/camera");
           }}
         >
           <AntDesign name="close" size={32} color="white" />
@@ -303,7 +213,11 @@ const PhotoRAGChat = ({
           styles.sheetContainer,
           {
             height: SHEET_HEIGHT + (kbVisible ? 0 : Math.max(insets.bottom, 8)),
-            bottom: kbVisible ? effectiveKb : 0,
+            bottom: kbVisible
+              ? Platform.OS === "ios"
+                ? Math.max(kbHeight - (insets.bottom || 0), 0)
+                : kbHeight
+              : 0,
             transform: [{ translateY }],
           },
         ]}
@@ -317,45 +231,12 @@ const PhotoRAGChat = ({
         </View>
 
         {voiceVisible ? (
-          <View
-            style={[
-              styles.listenSheetContainer,
-              { paddingBottom: Math.max(insets.bottom, 8) },
-            ]}
-          >
-            {/* Row with mic + text side-by-side */}
-            <View style={styles.listenHeaderRow}>
-              <Animated.View
-                style={[styles.listenMic, { transform: [{ scale: micPulse }] }]}
-              >
-                <MaterialCommunityIcons
-                  name="microphone"
-                  size={28}
-                  color="white"
-                />
-              </Animated.View>
-              <Text style={styles.listenHeader}>Listening...</Text>
-            </View>
-
-            {/* <Text style={styles.listenTimer}>{mmss}</Text> */}
-
-            <View style={styles.listenActions}>
-              <TouchableOpacity
-                onPress={cancelRecording}
-                style={styles.listenCancel}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.listenCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={stopRecordingNow}
-                style={styles.listenStop}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.listenStopText}>Stop</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          <VoiceRAGChat
+            visible={voiceVisible}
+            onClose={handleVoiceClose}
+            onRecorded={handleVoiceRecorded}
+            bottomPadding={Math.max(insets.bottom, 8)}
+          />
         ) : (
           <View style={styles.sheetInner}>
             <ScrollView
@@ -403,21 +284,11 @@ const PhotoRAGChat = ({
             <View
               style={[
                 styles.inputRow,
-                {
-                  paddingBottom: kbVisible ? 0 : Math.max(insets.bottom, 8),
-                },
+                { paddingBottom: kbVisible ? 0 : Math.max(insets.bottom, 8) },
               ]}
             >
-              <TouchableOpacity
-                onPress={openCamera}
-                activeOpacity={0.8}
-                style={styles.iconButton}
-              >
-                <Fontisto name="camera" size={18} />
-              </TouchableOpacity>
-
               <TextInput
-                placeholder="Message"
+                placeholder="Ask anything"
                 placeholderTextColor="#9AA0A6"
                 value={text}
                 onChangeText={setText}
@@ -434,15 +305,11 @@ const PhotoRAGChat = ({
               />
 
               <TouchableOpacity
-                onPress={onMicPress}
+                onPress={handleMicPress}
                 activeOpacity={0.8}
                 style={styles.iconButton}
               >
-                <MaterialCommunityIcons
-                  name={recState.isRecording ? "stop-circle" : "microphone"}
-                  size={20}
-                  color={recState.isRecording ? "red" : undefined}
-                />
+                <MaterialCommunityIcons name="microphone" size={20} />
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -485,66 +352,11 @@ const styles = StyleSheet.create({
 
   sheetInner: { paddingHorizontal: 12 },
 
-  listenSheetContainer: {
-    flex: 1,
-    paddingHorizontal: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  listenHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  listenHeader: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#202124",
-  },
-  listenMic: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#1A73E8",
-  },
-  listenTimer: { fontSize: 14, color: "#5F6368", marginTop: 6 },
-  listenActions: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 12,
-  },
-  listenCancel: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#F1F3F4",
-  },
-  listenCancelText: { color: "#202124", fontWeight: "600" },
-  listenStop: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#EA4335",
-  },
-  listenStopText: { color: "white", fontWeight: "700" },
-
   row: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 8,
     marginTop: 6,
-  },
-  avatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: "#F1F3F4",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 2,
   },
   bubble: {
     backgroundColor: "#F1F3F4",

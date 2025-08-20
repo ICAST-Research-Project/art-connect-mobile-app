@@ -1,6 +1,6 @@
-import { View, Image, TextInput } from "react-native";
-import React from "react";
 import { icons } from "@/constants/icons";
+import React from "react";
+import { Image, TextInput, View } from "react-native";
 
 interface Props {
   placeholder: string;

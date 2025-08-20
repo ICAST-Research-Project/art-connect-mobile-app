@@ -1,80 +1,97 @@
 import { icons } from "@/constants/icons";
-import { images } from "@/constants/images";
 import { useUser } from "@clerk/clerk-expo";
 import { Redirect, Tabs } from "expo-router";
-import { Image, ImageBackground, Text, View } from "react-native";
-
-const TabIcon = ({ focused, icon, title }: any) => {
-  if (focused) {
-    return (
-      <ImageBackground
-        source={images.highlight}
-        className="flex flex-row w-full flex-1 min-w-[123px] min-h-16 mt-4 justify-center items-center rounded-full overflow-hidden"
-      >
-        <Image source={icon} tintColor="#151312" className="size-5" />
-        <Text className="text-secondary text-base font-semibold ml-2">
-          {title}
-        </Text>
-      </ImageBackground>
-    );
-  }
-
-  return (
-    <View className="size-full justify-center items-center mt-4 rounded-full">
-      <Image source={icon} tintColor="#A8B5DB" className="size-5" />
-    </View>
-  );
-};
+import { Image, View } from "react-native";
 
 export default function Layout() {
   const { isSignedIn } = useUser();
+  const TabIcon = ({ focused, icon, title }: any) => {
+    return (
+      <View
+        style={{
+          width: 64,
+          height: 64,
+          borderRadius: 32,
+          borderWidth: 3,
+          borderColor: focused ? "#1A73E8" : "#A8B5DB", // blue when active, gray when inactive
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "#0F0D23", // matches your tab bar background
+          marginTop: -20, // lifts the circle above the bar a little
+        }}
+      >
+        <Image
+          source={icon}
+          style={{ width: 28, height: 28, tintColor: "white" }}
+        />
+      </View>
+    );
+  };
 
   if (!isSignedIn) return <Redirect href={"/sign-in"} />;
 
   return (
     <Tabs
+      // screenOptions={{
+      //   tabBarShowLabel: false,
+      //   tabBarItemStyle: {
+      //     width: "100%",
+      //     height: "100%",
+      //     justifyContent: "center",
+      //     alignItems: "center",
+      //   },
+      //   tabBarStyle: {
+      //     backgroundColor: "#0F0D23",
+      //     borderRadius: 50,
+      //     marginHorizontal: 20,
+      //     marginBottom: 36,
+      //     height: 52,
+      //     position: "absolute",
+      //     overflow: "hidden",
+      //     borderWidth: 1,
+      //     borderColor: "0F0D23",
+      //   },
+      // }}
       screenOptions={{
         tabBarShowLabel: false,
-        tabBarItemStyle: {
-          width: "100%",
-          height: "100%",
-          justifyContent: "center",
-          alignItems: "center",
-        },
         tabBarStyle: {
-          backgroundColor: "#0F0D23",
-          borderRadius: 50,
-          marginHorizontal: 20,
-          marginBottom: 36,
-          height: 52,
+          backgroundColor: "transparent",
           position: "absolute",
-          overflow: "hidden",
-          borderWidth: 1,
-          borderColor: "0F0D23",
+          borderTopWidth: 0,
+          elevation: 0,
+          height: 80,
         },
       }}
     >
       <Tabs.Screen
         name="index"
+        // options={{
+        //   title: "Home",
+        //   headerShown: false,
+        //   tabBarIcon: ({ focused }) => (
+        //     <TabIcon focused={focused} icon={icons.home} title="Home" />
+        //   ),
+        // }}
         options={{
-          title: "Home",
+          href: null,
           headerShown: false,
-          tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} icon={icons.home} title="Home" />
-          ),
         }}
       />
       <Tabs.Screen
         name="search"
+        // options={{
+        //   title: "Search",
+        //   headerShown: false,
+        //   tabBarIcon: ({ focused }) => (
+        //     <TabIcon focused={focused} icon={icons.search} title="Search" />
+        //   ),
+        // }}
         options={{
-          title: "Search",
+          href: null,
           headerShown: false,
-          tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} icon={icons.search} title="Search" />
-          ),
         }}
       />
-      <Tabs.Screen
+      {/* <Tabs.Screen
         name="camera"
         options={{
           title: "Scan & Chat",
@@ -88,15 +105,30 @@ export default function Layout() {
             />
           ),
         }}
+      /> */}
+      <Tabs.Screen
+        name="camera"
+        options={{
+          title: "Scan & Chat",
+          headerShown: false,
+          tabBarStyle: { display: "none" },
+          tabBarIcon: ({ focused }) => (
+            <TabIcon focused={focused} icon={icons.camera} title="Scan" />
+          ),
+        }}
       />
       <Tabs.Screen
         name="profile"
+        // options={{
+        //   title: "Profile",
+        //   headerShown: false,
+        //   tabBarIcon: ({ focused }) => (
+        //     <TabIcon focused={focused} icon={icons.person} title="Profile" />
+        //   ),
+        // }}
         options={{
-          title: "Profile",
+          href: null,
           headerShown: false,
-          tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} icon={icons.person} title="Profile" />
-          ),
         }}
       />
       <Tabs.Screen

@@ -4,12 +4,12 @@ import useFetch from "@/services/useFetch";
 import { SignedIn, SignedOut, useUser } from "@clerk/clerk-expo";
 import { Link, useRouter } from "expo-router";
 import {
-  Text,
-  View,
-  Image,
   ActivityIndicator,
   FlatList,
+  Image,
+  Text,
   TouchableOpacity,
+  View,
 } from "react-native";
 
 export default function Page() {
@@ -34,15 +34,17 @@ export default function Page() {
               </Text>
             </View>
             {user?.imageUrl && (
-              <Image
-                source={{ uri: user.imageUrl }}
-                className="w-20 h-20 rounded-full"
-              />
+              <TouchableOpacity onPress={() => router.push("/profile")}>
+                <Image
+                  source={{ uri: user.imageUrl }}
+                  className="w-20 h-20 rounded-full"
+                />
+              </TouchableOpacity>
             )}
           </View>
           <View className="px-4">
             <SearchBar
-              onPress={() => router.push("/search")}
+              onPress={() => console.log("Clicked Search")}
               placeholder="Where do you want to explore art?"
             />
           </View>

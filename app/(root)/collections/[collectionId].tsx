@@ -1,16 +1,16 @@
+import { CollectionDetail, fetchCollectionById } from "@/services/api";
+import useFetch from "@/services/useFetch";
+import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback } from "react";
 import {
-  View,
-  Text,
+  ActivityIndicator,
   FlatList,
   Image,
+  Text,
   TouchableOpacity,
-  ActivityIndicator,
+  View,
 } from "react-native";
-import { fetchCollectionById, CollectionDetail } from "@/services/api";
-import useFetch from "@/services/useFetch";
-import { useFocusEffect } from "@react-navigation/native";
 
 export default function CollectionDetailPage() {
   const router = useRouter();
@@ -94,13 +94,15 @@ export default function CollectionDetailPage() {
           </TouchableOpacity>
         </View>
       ) : (
-        <View className="px-4 pb-8">
+        <View className="flex-1">
           <FlatList
             data={collection?.artworks ?? []}
             keyExtractor={(a) => a.id}
             numColumns={2}
             columnWrapperStyle={{ justifyContent: "space-between" }}
             showsVerticalScrollIndicator={false}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
             renderItem={({ item }) => (
               <View className="w-[48%] mb-3">
                 <Image
@@ -119,14 +121,6 @@ export default function CollectionDetailPage() {
             refreshing={false}
             onRefresh={refetch}
           />
-          <View className="flex items-center mt-2">
-            <TouchableOpacity
-              onPress={() => router.push("/camera")}
-              className="bg-blue-500 px-6 py-3 rounded-lg"
-            >
-              <Text className="text-white font-semibold">Scan & Chat</Text>
-            </TouchableOpacity>
-          </View>
         </View>
       )}
     </View>
