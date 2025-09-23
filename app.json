@@ -58,7 +58,8 @@
         {
           "microphonePermission": "Allow $(mobile) to access your microphone."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

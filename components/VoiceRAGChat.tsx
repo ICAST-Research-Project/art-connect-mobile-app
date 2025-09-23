@@ -273,3 +273,202 @@ const styles = StyleSheet.create({
 });
 
 export default VoiceRAGChat;
+
+// import { useSpeechToText } from "@/hooks/useSpeechToText";
+// import { useMuseumApi } from "@/lib/museumApi";
+// import { Audio } from "expo-av";
+// import * as FileSystem from "expo-file-system";
+// import React, { useEffect, useRef, useState } from "react";
+// import {
+//   ActivityIndicator,
+//   StyleSheet,
+//   Text,
+//   TouchableOpacity,
+//   View,
+// } from "react-native";
+
+// type Props = {
+//   visible: boolean;
+//   onClose: () => void;
+//   bottomPadding?: number;
+//   scanId: string;
+//   artworkId?: string | null;
+//   artistId?: string | null;
+//   voiceId?: string; // optional, server-side voice selector
+// };
+
+// const VoiceRAGChat: React.FC<Props> = ({
+//   visible,
+//   onClose,
+//   bottomPadding = 8,
+//   scanId,
+//   artworkId,
+//   artistId,
+//   voiceId,
+// }) => {
+//   const { postVoiceChat } = useMuseumApi();
+//   const { listening, partial, finalText, start, stop, cancel } =
+//     useSpeechToText();
+
+//   const [busy, setBusy] = useState(false);
+//   const [error, setError] = useState<string | null>(null);
+//   const soundRef = useRef<Audio.Sound | null>(null);
+
+//   // Prepare audio playback mode (no legacy interruption constants)
+//   useEffect(() => {
+//     Audio.setAudioModeAsync({
+//       // Playback should respect the iOS silent switch
+//       playsInSilentModeIOS: true,
+//       // We’re only playing (not recording), so leave recording off here
+//       allowsRecordingIOS: false,
+//       staysActiveInBackground: false,
+//       shouldDuckAndroid: true,
+//     }).catch(() => {});
+//   }, []);
+
+//   // Auto-start listening when this sheet becomes visible; cancel when closed
+//   useEffect(() => {
+//     let mounted = true;
+//     (async () => {
+//       if (visible) {
+//         setError(null);
+//         try {
+//           await start();
+//         } catch (e: any) {
+//           if (mounted) setError(e?.message ?? String(e));
+//         }
+//       } else {
+//         await cancel();
+//       }
+//     })();
+//     return () => {
+//       mounted = false;
+//     };
+//     // eslint-disable-next-line react-hooks/exhaustive-deps
+//   }, [visible]);
+
+//   // Cleanup sound on unmount
+//   useEffect(() => {
+//     return () => {
+//       if (soundRef.current) soundRef.current.unloadAsync().catch(() => {});
+//     };
+//   }, []);
+
+//   const playBase64Mp3 = async (b64: string) => {
+//     const fileUri = `${FileSystem.cacheDirectory}reply_${Date.now()}.mp3`;
+//     await FileSystem.writeAsStringAsync(fileUri, b64, {
+//       encoding: FileSystem.EncodingType.Base64,
+//     });
+//     if (soundRef.current) {
+//       try {
+//         await soundRef.current.unloadAsync();
+//       } catch {}
+//     }
+//     const { sound } = await Audio.Sound.createAsync({ uri: fileUri });
+//     soundRef.current = sound;
+//     await sound.playAsync();
+//   };
+
+//   const sendTranscript = async (text: string) => {
+//     if (!text.trim()) return;
+//     setBusy(true);
+//     setError(null);
+//     try {
+//       const resp = await postVoiceChat({
+//         scan_id: scanId,
+//         artwork_id: artworkId ?? undefined,
+//         artist_id: artistId ?? undefined,
+//         prompt: text, // TEXT ONLY; server returns base64 MP3
+//         voice_id: voiceId,
+//       });
+//       await playBase64Mp3(resp.audio_b64);
+//     } catch (e: any) {
+//       setError(e?.message ?? String(e));
+//     } finally {
+//       setBusy(false);
+//     }
+//   };
+
+//   const onPressMain = async () => {
+//     if (listening) {
+//       // stop listening → wait for transcript → ask server → play reply
+//       const text = await stop();
+//       await sendTranscript(text);
+//     } else {
+//       // if user stopped listening previously, let them speak again
+//       setError(null);
+//       await start();
+//     }
+//   };
+
+//   if (!visible) return null;
+
+//   const display = listening
+//     ? partial || "Listening…"
+//     : finalText
+//     ? `You said: ${finalText}`
+//     : "";
+
+//   return (
+//     <View style={[styles.container, { paddingBottom: bottomPadding }]}>
+//       <Text style={styles.title}>Voice conversation</Text>
+//       {!!display && <Text style={styles.hint}>{display}</Text>}
+//       {!!error && <Text style={styles.error}>{error}</Text>}
+
+//       <View style={{ height: 16 }} />
+
+//       <TouchableOpacity
+//         style={[
+//           styles.button,
+//           { backgroundColor: listening ? "#EA4335" : "#1A73E8" },
+//         ]}
+//         onPress={onPressMain}
+//         disabled={busy}
+//       >
+//         {busy ? (
+//           <ActivityIndicator color="white" />
+//         ) : (
+//           <Text style={styles.buttonText}>
+//             {listening ? "Stop & Ask" : "Tap to Speak"}
+//           </Text>
+//         )}
+//       </TouchableOpacity>
+
+//       <View style={{ height: 12 }} />
+//       <TouchableOpacity
+//         style={styles.outline}
+//         onPress={onClose}
+//         disabled={busy || listening}
+//       >
+//         <Text style={styles.outlineText}>Close</Text>
+//       </TouchableOpacity>
+//     </View>
+//   );
+// };
+
+// const styles = StyleSheet.create({
+//   container: { paddingHorizontal: 16, paddingTop: 8 },
+//   title: { fontSize: 16, fontWeight: "700" },
+//   hint: { marginTop: 6, color: "#5F6368" },
+//   error: { color: "red", marginTop: 8 },
+//   button: {
+//     paddingHorizontal: 14,
+//     paddingVertical: 14,
+//     borderRadius: 12,
+//     alignItems: "center",
+//     justifyContent: "center",
+//   },
+//   buttonText: { color: "white", fontWeight: "700" },
+//   outline: {
+//     paddingHorizontal: 14,
+//     paddingVertical: 14,
+//     borderRadius: 12,
+//     alignItems: "center",
+//     justifyContent: "center",
+//     borderColor: "#1A73E8",
+//     borderWidth: 1,
+//   },
+//   outlineText: { color: "#1A73E8", fontWeight: "700" },
+// });
+
+// export default VoiceRAGChat;

@@ -2,6 +2,7 @@ import PhotoPreviewSection from "@/components/PhotoRAGChat";
 import { AntDesign } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as ImageManipulator from "expo-image-manipulator";
 import { router } from "expo-router";
 import React, { useRef, useState } from "react";
 import { Button, StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -23,7 +24,13 @@ export default function Camera() {
         exif: false,
       } as const;
       const taken = await cameraRef.current.takePictureAsync(options);
-      setPhoto(taken);
+      const processed = await ImageManipulator.manipulateAsync(
+        taken.uri,
+        [{ resize: { width: 1280 } }],
+        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      setPhoto({ ...taken, uri: processed.uri });
+      // setPhoto(taken);
     } catch (e) {
       console.warn("takePictureAsync failed", e);
     }

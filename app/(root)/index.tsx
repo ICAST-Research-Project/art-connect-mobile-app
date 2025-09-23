@@ -15,6 +15,14 @@ import {
 export default function Page() {
   const router = useRouter();
   const { user } = useUser();
+  // const { getToken } = useAuth();
+
+  // useEffect(() => {
+  //   (async () => {
+  //     const token = await getToken();
+  //     console.log("JWT token:", token);
+  //   })();
+  // }, [getToken]);
 
   const {
     data: museums,
