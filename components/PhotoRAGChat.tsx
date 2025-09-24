@@ -1,10 +1,6 @@
-// import {
-//   postChat,
-//   searchImageFromUri,
-//   type SearchFullResponse,
-// } from "@/lib/museumApi";
+/* eslint-disable react-hooks/exhaustive-deps */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { useMuseumApi, type SearchFullResponse } from "@/lib/museumApi";
-
 import { AntDesign, MaterialCommunityIcons } from "@expo/vector-icons";
 import { CameraCapturedPicture } from "expo-camera";
 import { router } from "expo-router";
@@ -50,6 +46,7 @@ type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   pending?: boolean;
+  channel?: "text" | "voice";
 };
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -65,8 +62,8 @@ const TRANSLATE_MID = Math.floor(
 
 const SUGGESTIONS = [
   "What is the significance of this work?",
-  "Who is the artist?",
   "Materials & technique?",
+  "Who is the artist?",
 ];
 
 const PhotoRAGChat = ({
@@ -112,8 +109,16 @@ const PhotoRAGChat = ({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState<SearchFullResponse | null>(null);
 
-  const { searchImageFromUri, postChat } = useMuseumApi(); // ← NEW
+  const { searchImageFromUri, postChat, postVoiceChatFromFile } =
+    useMuseumApi();
   const [scanId, setScanId] = useState<string | null>(null);
+
+  const pushAssistant = (text: string) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: `bot_${Date.now()}`, role: "assistant", text },
+    ]);
+  };
 
   const runSearch = useCallback(async () => {
     if (!photo?.uri) return;
@@ -265,7 +270,20 @@ const PhotoRAGChat = ({
       bounciness: 6,
     }).start(() => (dragStart.current = TRANSLATE_MID));
 
-    if (!isMatch || !topResult) return;
+    if (!isMatch || !topResult) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === pendingMsg.id
+            ? {
+                ...m,
+                pending: false,
+                text: "Please scan the artwork first before asking a question.",
+              }
+            : m
+        )
+      );
+      return;
+    }
 
     if (!scanId) {
       setChatError("Missing scan id. Please rescan the artwork.");
@@ -289,9 +307,9 @@ const PhotoRAGChat = ({
 
       const resp = await postChat({
         question: toSend,
-        scan_id: scanId, // ← REQUIRED
-        artwork_id: topArtworkId ?? undefined, // optional override
-        artist_id: maybeArtistId ?? undefined, // optional override
+        scan_id: scanId,
+        artwork_id: topArtworkId ?? undefined,
+        artist_id: maybeArtistId ?? undefined,
         metric: "cosine",
         top_k: 6,
       });
@@ -342,6 +360,31 @@ const PhotoRAGChat = ({
   const bubbleMaxHeight = showChatControls
     ? SHEET_HEIGHT - 160
     : SHEET_HEIGHT - 120;
+
+  const pushVoiceTurn = (transcript: string, answer: string) => {
+    if (transcript?.trim()) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `user_voice_${Date.now()}`,
+          role: "user",
+          text: transcript.trim(),
+          channel: "voice", // 👈 tag
+        },
+      ]);
+    }
+    if (answer?.trim()) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `bot_voice_${Date.now() + 1}`,
+          role: "assistant",
+          text: answer.trim(),
+          channel: "voice", // 👈 tag
+        },
+      ]);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.root} edges={["left", "right"]}>
@@ -402,17 +445,16 @@ const PhotoRAGChat = ({
               visible={voiceVisible}
               onClose={handleVoiceClose}
               onRecorded={(uri) => console.log("Recorded:", uri)}
+              scanId={scanId!}
+              artworkId={topResult ? String(topResult.artwork_id) : undefined}
+              artistId={topResult?.artist_id ?? undefined}
+              voiceId={undefined}
               bottomPadding={Math.max(insets.bottom, 8)}
+              onVoiceTurn={(transcript, answer) => {
+                pushVoiceTurn(transcript, answer);
+              }}
             />
           ) : (
-            // <VoiceRAGChat
-            //   visible={voiceVisible}
-            //   onClose={handleVoiceClose}
-            //   bottomPadding={Math.max(insets.bottom, 8)}
-            //   scanId={scanId!}
-            //   artworkId={topResult ? String(topResult.artwork_id) : undefined}
-            //   artistId={topResult?.artist_id ?? undefined}
-            // />
             <View style={styles.sheetInner}>
               {error && (
                 <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
@@ -496,7 +538,7 @@ const PhotoRAGChat = ({
                     />
                     <View style={styles.bubbleBot}>
                       {isMatch && topArtistName ? (
-                        <Text style={styles.bubbleText}>
+                        <Text style={styles.bubbleTextBot}>
                           This is an artwork by{" "}
                           <Text style={styles.bubbleStrong}>
                             {topArtistName}
@@ -504,7 +546,7 @@ const PhotoRAGChat = ({
                           . What would you like to know more about it?
                         </Text>
                       ) : (
-                        <Text style={styles.bubbleText}>{bubbleText}</Text>
+                        <Text style={styles.bubbleTextBot}>{bubbleText}</Text>
                       )}
                     </View>
                   </View>
@@ -514,8 +556,13 @@ const PhotoRAGChat = ({
                   if (m.role === "user") {
                     return (
                       <View key={m.id} style={styles.rowRight}>
-                        <View style={styles.bubbleUser}>
-                          <Text style={styles.bubbleTextUser}>{m.text}</Text>
+                        <View style={styles.rightMsgContainer}>
+                          {m.channel === "voice" ? (
+                            <Text style={styles.tagVoiceUser}>Voice</Text>
+                          ) : null}
+                          <View style={styles.bubbleUser}>
+                            <Text style={styles.bubbleTextUser}>{m.text}</Text>
+                          </View>
                         </View>
                       </View>
                     );
@@ -530,16 +577,23 @@ const PhotoRAGChat = ({
                           color="black"
                           style={{ marginTop: 2 }}
                         />
-                        <View style={styles.bubbleBot}>
-                          <View
-                            style={{
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: 8,
-                            }}
-                          >
-                            <ActivityIndicator />
-                            <Text style={styles.bubbleText}>Thinking…</Text>
+                        <View style={styles.leftMsgContainer}>
+                          {m.channel === "voice" ? (
+                            <Text style={styles.tagVoice}>Voice</Text>
+                          ) : null}
+                          <View style={styles.bubbleBot}>
+                            <View
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 8,
+                              }}
+                            >
+                              <ActivityIndicator />
+                              <Text style={styles.bubbleTextBot}>
+                                Thinking…
+                              </Text>
+                            </View>
                           </View>
                         </View>
                       </View>
@@ -554,8 +608,13 @@ const PhotoRAGChat = ({
                         color="black"
                         style={{ marginTop: 2 }}
                       />
-                      <View style={styles.bubbleBot}>
-                        <Text style={styles.bubbleText}>{m.text}</Text>
+                      <View style={styles.leftMsgContainer}>
+                        {m.channel === "voice" ? (
+                          <Text style={styles.tagVoice}>Voice</Text>
+                        ) : null}
+                        <View style={styles.bubbleBot}>
+                          <Text style={styles.bubbleTextBot}>{m.text}</Text>
+                        </View>
                       </View>
                     </View>
                   );
@@ -695,7 +754,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     maxWidth: "88%",
   },
-  bubbleText: { color: "#202124", fontSize: 14 },
+  bubbleTextBot: {
+    color: "#202124",
+    fontSize: 14,
+    textAlign: "justify",
+    lineHeight: 20,
+  },
 
   suggestionsScroll: { marginTop: 8, marginBottom: 6 },
   suggestionsRow: { paddingHorizontal: 8, alignItems: "center" },
@@ -813,18 +877,52 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 14,
-    maxWidth: "85%",
+    maxWidth: "100%",
+    alignSelf: "flex-start",
   },
   bubbleUser: {
     backgroundColor: "#1A73E8",
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 14,
-    maxWidth: "85%",
+    maxWidth: "100%",
     alignSelf: "flex-end",
   },
 
   bubbleTextUser: { color: "white", fontSize: 14 },
+  tagVoice: {
+    alignSelf: "flex-start",
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#1A73E8",
+    backgroundColor: "#E8F0FE",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  tagVoiceUser: {
+    alignSelf: "flex-end",
+    fontSize: 10,
+    fontWeight: "700",
+    color: "white",
+    backgroundColor: "#174EA6",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginBottom: 4,
+    opacity: 0.95,
+  },
+  leftMsgContainer: {
+    flex: 1,
+    flexShrink: 1,
+    alignItems: "flex-start",
+  },
+  rightMsgContainer: {
+    maxWidth: "85%",
+    flexShrink: 1,
+    alignItems: "flex-end",
+  },
 });
 
 export default PhotoRAGChat;

@@ -1,13 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { AntDesign, MaterialCommunityIcons } from "@expo/vector-icons";
-import {
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-  useAudioRecorder,
-  useAudioRecorderState,
-} from "expo-audio";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Audio } from "expo-av";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -17,26 +11,60 @@ import {
   View,
 } from "react-native";
 
+import { playBase64Audio } from "@/lib/audioPlayer";
+import { useMuseumApi } from "@/lib/museumApi";
+
 type Props = {
   visible: boolean;
   onClose: () => void;
   onRecorded?: (uri: string) => void;
+  scanId: string;
+  artworkId?: string;
+  artistId?: string;
+  voiceId?: string;
   bottomPadding?: number;
+  onAnswer?: (text: string) => void;
+  onVoiceTurn?: (transcript: string, answer: string) => void;
 };
+
+type Phase = "listening" | "processing" | "playing";
+
+// ---- VAD tuning ----
+const SILENCE_DB = -45;
+const SILENCE_MS = 1400;
+const POLL_MS = 120;
+const MIN_SPEECH_MS = 450;
+const START_GRACE_MS = 400;
 
 const VoiceRAGChat: React.FC<Props> = ({
   visible,
   onClose,
   onRecorded,
+  scanId,
+  artworkId,
+  artistId,
+  voiceId,
   bottomPadding = 8,
+  onAnswer,
+  onVoiceTurn,
 }) => {
-  const [muted, setMuted] = useState(false);
+  const { postVoiceChatFromFile } = useMuseumApi();
 
-  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recState = useAudioRecorderState(audioRecorder);
+  const [phase, setPhase] = useState<Phase>("listening");
+  const [muted, setMuted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [durationMs, setDurationMs] = useState(0);
+
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const meterTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastVoiceTimeRef = useRef<number>(Date.now());
+  const speechDetectedRef = useRef<boolean>(false);
+  const speechStartRef = useRef<number>(0);
+  const stoppingRef = useRef<boolean>(false);
+  const playingSoundRef = useRef<Audio.Sound | null>(null);
 
   const micPulse = useRef(new Animated.Value(1)).current;
-
   const startPulse = () => {
     micPulse.setValue(1);
     Animated.loop(
@@ -54,107 +82,348 @@ const VoiceRAGChat: React.FC<Props> = ({
       ])
     ).start();
   };
-
   const stopPulse = () => {
     micPulse.stopAnimation();
     micPulse.setValue(1);
   };
 
-  const mmss = useMemo(() => {
-    const ms = recState.durationMillis ?? 0;
-    const m = Math.floor(ms / 60000);
-    const s = Math.floor((ms % 60000) / 1000);
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  }, [recState.durationMillis]);
-
-  // When visible: request permission, set audio mode, start recording
+  const isActiveRef = useRef(false);
   useEffect(() => {
-    let mounted = true;
-    const start = async () => {
-      try {
-        const status = await AudioModule.requestRecordingPermissionsAsync();
-        if (!status.granted) {
-          Alert.alert("Microphone permission is required to record.");
-          onClose();
-          return;
-        }
-        await setAudioModeAsync({
-          playsInSilentMode: true,
-          allowsRecording: true,
-        });
+    isActiveRef.current = visible;
+  }, [visible]);
 
-        await audioRecorder.prepareToRecordAsync();
-        await audioRecorder.record(); // start recording
-        if (mounted) {
-          setMuted(false);
-          startPulse();
-        }
-      } catch (e) {
-        console.warn("Audio record start error:", e);
-        onClose();
+  // const mmss = useMemo(() => {
+  //   const m = Math.floor(durationMs / 60000);
+  //   const s = Math.floor((durationMs % 60000) / 1000);
+  //   return `${m}:${s.toString().padStart(2, "0")}`;
+  // }, [durationMs]);
+
+  const clearMeterTimer = () => {
+    if (meterTimerRef.current != null) {
+      clearInterval(meterTimerRef.current);
+      meterTimerRef.current = null;
+    }
+  };
+
+  const unloadPlayingSound = async () => {
+    try {
+      if (playingSoundRef.current) {
+        // @ts-ignore (type accepts function or null)
+        playingSoundRef.current.setOnPlaybackStatusUpdate &&
+          playingSoundRef.current.setOnPlaybackStatusUpdate(null);
+        await playingSoundRef.current.unloadAsync();
       }
-    };
+    } catch {}
+    playingSoundRef.current = null;
+  };
 
-    if (visible) start();
+  const hardStopRecording = async () => {
+    try {
+      if (recordingRef.current) {
+        const status = await recordingRef.current
+          .getStatusAsync()
+          .catch(() => null);
+        if (status?.isRecording) {
+          await recordingRef.current.stopAndUnloadAsync();
+        }
+      }
+    } catch {}
+    recordingRef.current = null;
+  };
 
-    return () => {
-      mounted = false;
+  // ---------- recording with metering ----------
+  const beginRecording = async () => {
+    // Respect global active guard
+    if (!isActiveRef.current) return;
+
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Microphone permission is required to record.");
+        return;
+      }
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+
+      if (!isActiveRef.current) return;
+
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync({
+        android: {
+          extension: ".m4a",
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: ".m4a",
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.MAX,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        web: {
+          mimeType: "audio/webm;codecs=opus",
+          bitsPerSecond: 128000,
+        },
+        isMeteringEnabled: true,
+      });
+
+      if (!isActiveRef.current) return;
+
+      recordingRef.current = rec;
+      await rec.startAsync();
+
+      setPhase("listening");
+      setMuted(false);
+      setDurationMs(0);
+      setVoiceActive(false);
+      lastVoiceTimeRef.current = Date.now();
+      speechDetectedRef.current = false;
+      speechStartRef.current = 0;
+
+      clearMeterTimer();
+      meterTimerRef.current = setInterval(async () => {
+        if (!isActiveRef.current) return;
+        try {
+          const status = await rec.getStatusAsync();
+
+          if (typeof status.durationMillis === "number")
+            setDurationMs(status.durationMillis);
+
+          if (!status.isRecording || muted) {
+            setVoiceActive(false);
+            stopPulse();
+            return;
+          }
+
+          const now = Date.now();
+          const withinGrace = now - lastVoiceTimeRef.current < START_GRACE_MS;
+          const level = (status as any).metering as number | undefined;
+
+          if (typeof level === "number" && level > SILENCE_DB) {
+            if (!speechDetectedRef.current) {
+              speechDetectedRef.current = true;
+              speechStartRef.current = now;
+            }
+            setVoiceActive(true);
+            lastVoiceTimeRef.current = now;
+            startPulse();
+          } else {
+            setVoiceActive(false);
+            stopPulse();
+
+            if (!withinGrace && speechDetectedRef.current) {
+              const silentFor = now - lastVoiceTimeRef.current;
+              const voicedMs =
+                lastVoiceTimeRef.current - speechStartRef.current;
+              const minSpeechSatisfied = voicedMs >= MIN_SPEECH_MS;
+
+              if (
+                silentFor > SILENCE_MS &&
+                minSpeechSatisfied &&
+                !stoppingRef.current
+              ) {
+                stoppingRef.current = true;
+                clearMeterTimer();
+                await stopRecordingAndSubmit();
+              }
+            }
+          }
+        } catch {}
+      }, POLL_MS);
+    } catch (e) {
+      console.warn("Audio record start error:", e);
+      Alert.alert("Could not start recording.");
+    }
+  };
+
+  const stopRecordingAndSubmit = async () => {
+    try {
+      if (!isActiveRef.current) return;
+
+      const rec = recordingRef.current;
+      if (rec) {
+        const status = await rec.getStatusAsync().catch(() => null);
+        if (status?.isRecording) await rec.stopAndUnloadAsync();
+      }
+
+      const uri = rec?.getURI();
+      recordingRef.current = null;
+      clearMeterTimer();
+      stopPulse();
+      setVoiceActive(false);
+
+      if (uri && isActiveRef.current) {
+        onRecorded?.(uri);
+        await sendAndPlay(uri);
+      } else {
+      }
+    } catch (e) {
+      console.warn("Stop failed:", e);
+    } finally {
+      stoppingRef.current = false;
+      setMuted(false);
+    }
+  };
+
+  const resumeAutoListening = async () => {
+    if (!isActiveRef.current) return;
+    if (!visible) return;
+    if (recordingRef.current) return;
+    await beginRecording();
+  };
+
+  // ---------- send to API & play ----------
+  const sendAndPlay = async (uri: string) => {
+    try {
+      if (!isActiveRef.current) return;
+
+      setSubmitting(true);
+      setPhase("processing");
+
+      const resp = await postVoiceChatFromFile({
+        audioUri: uri,
+        scan_id: scanId,
+        artwork_id: artworkId,
+        artist_id: artistId,
+        voice_id: voiceId,
+      });
+
+      if (!isActiveRef.current) return;
+
+      const transcript = resp.transcript ?? "";
+      const answer = resp.answer_text ?? "";
+
+      if (onVoiceTurn && (transcript || answer)) {
+        onVoiceTurn(transcript, answer);
+      } else if (answer && onAnswer) {
+        onAnswer(answer);
+      }
+
+      if (resp.audio_b64) {
+        setPhase("playing");
+        const sound = await playBase64Audio(
+          resp.audio_b64,
+          resp.mime ?? "audio/mpeg"
+        );
+        playingSoundRef.current = sound as Audio.Sound | null;
+
+        if (playingSoundRef.current?.setOnPlaybackStatusUpdate) {
+          playingSoundRef.current.setOnPlaybackStatusUpdate((s: any) => {
+            if (!s?.isLoaded) return;
+            if (s.didJustFinish) {
+              unloadPlayingSound().catch(() => {});
+              // only auto-resume if still visible
+              if (isActiveRef.current) resumeAutoListening();
+            }
+          });
+        } else {
+          if (isActiveRef.current) resumeAutoListening();
+        }
+      } else {
+        if (isActiveRef.current) resumeAutoListening();
+      }
+    } catch (e) {
+      console.warn("Voice send/play error:", e);
+      Alert.alert("Sorry — I couldn’t process your voice message.");
+      if (isActiveRef.current) resumeAutoListening();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ---------- visibility lifecycle ----------
+  useEffect(() => {
+    isActiveRef.current = visible;
+
+    if (visible) {
+      setMuted(false);
+      setVoiceActive(false);
+      setDurationMs(0);
+      stoppingRef.current = false;
+      beginRecording();
+    } else {
+      clearMeterTimer();
       stopPulse();
       setMuted(false);
-      // ensure stop if unmounting while recording
-      try {
-        if (recState.isRecording) audioRecorder.stop();
-      } catch {}
-    };
+      setVoiceActive(false);
+      setDurationMs(0);
+      stoppingRef.current = false;
+
+      (async () => {
+        await hardStopRecording();
+        await unloadPlayingSound();
+
+        try {
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: false,
+            playsInSilentModeIOS: true,
+            staysActiveInBackground: false,
+            shouldDuckAndroid: true,
+            playThroughEarpieceAndroid: false,
+          });
+        } catch {}
+      })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  // Keep pulse stopped while muted; resume when unmuted
   useEffect(() => {
-    if (!visible) return;
-    if (muted) stopPulse();
-    else startPulse();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [muted, visible]);
+    return () => {
+      isActiveRef.current = false;
+      clearMeterTimer();
+      (async () => {
+        await hardStopRecording();
+        await unloadPlayingSound();
+      })();
+    };
+  }, []);
 
-  // ✅ MUTE = pause(); UNMUTE = record() to resume
+  // ---------- controls ----------
   const toggleMute = async () => {
+    if (phase !== "listening" || !recordingRef.current) return;
     try {
-      if (!recState.isRecording && !muted) {
-        // if we somehow aren't recording yet, start
-        await audioRecorder.record();
-      }
       if (!muted) {
-        // go to muted state -> pause recording
-        await audioRecorder.pause();
+        await recordingRef.current.pauseAsync();
         setMuted(true);
+        setVoiceActive(false);
+        stopPulse();
       } else {
-        // unmute -> resume recording
-        await audioRecorder.record();
+        await recordingRef.current.startAsync();
         setMuted(false);
+        lastVoiceTimeRef.current = Date.now();
       }
     } catch (e) {
       console.warn("Mute toggle error:", e);
     }
   };
+  const LABELS = {
+    listeningActive: "Listening", // was "Listening…"
+    listeningIdle: "Ask anything", // was "Waiting…"
+    listeningMuted: "Muted", // was "Paused"
+    processing: "Thinking…", // was "Answering…"
+    playing: "Speaking…", // was "Playing reply"
+  } as const;
 
-  const stopRecordingNow = async () => {
-    try {
-      if (recState.isRecording) {
-        await audioRecorder.stop();
-      }
-      if (audioRecorder.uri) {
-        console.log("Recorded file:", audioRecorder.uri); // <- you'll see this
-        onRecorded?.(audioRecorder.uri);
-      }
-    } catch (e) {
-      console.warn("Stop failed:", e);
-    } finally {
-      stopPulse();
-      setMuted(false);
-      onClose();
-    }
-  };
+  const headerText =
+    phase === "listening"
+      ? muted
+        ? LABELS.listeningMuted
+        : voiceActive
+        ? LABELS.listeningActive
+        : LABELS.listeningIdle
+      : phase === "processing"
+      ? LABELS.processing
+      : LABELS.playing;
 
   if (!visible) return null;
 
@@ -165,31 +434,50 @@ const VoiceRAGChat: React.FC<Props> = ({
         { paddingBottom: Math.max(bottomPadding, 8) },
       ]}
     >
-      {/* Header row */}
-      <View style={styles.listenHeaderRow}>
+      <View style={styles.topCenter}>
         <Animated.View
           style={[
             styles.listenMic,
+            styles.listenMicLg,
             {
-              transform: [{ scale: muted ? 1 : micPulse }],
-              backgroundColor: muted ? "#EA4335" : "#1A73E8",
+              transform: [
+                {
+                  scale:
+                    phase === "listening" && voiceActive && !muted
+                      ? micPulse
+                      : 1,
+                },
+              ],
+              backgroundColor:
+                phase === "listening" && voiceActive && !muted
+                  ? "#1A73E8"
+                  : phase === "processing"
+                  ? "#F9AB00"
+                  : phase === "playing"
+                  ? "#34A853"
+                  : "#9AA0A6",
             },
           ]}
         >
           <MaterialCommunityIcons name="microphone" size={28} color="white" />
         </Animated.View>
-        <Text style={styles.listenHeader}>
-          {muted ? "Muted" : "Listening..."}
-        </Text>
+        <View style={{ marginLeft: 8 }}>
+          <Text style={styles.listenHeaderBelow}>{headerText}</Text>
+          {/* {phase === "listening" ? (
+            <Text style={styles.subText}>{mmss}</Text>
+          ) : null} */}
+        </View>
       </View>
 
-      {/* <Text style={styles.listenTimer}>{mmss}</Text> */}
-
-      <View style={styles.listenActions}>
-        {/* Mute / Unmute */}
+      <View className="listenActions" style={styles.listenActions}>
         <TouchableOpacity
           onPress={toggleMute}
-          style={[styles.listenMute, muted && styles.listenMuteActive]}
+          disabled={phase !== "listening"}
+          style={[
+            styles.listenMute,
+            phase !== "listening" && { opacity: 0.5 },
+            muted && styles.listenMuteActive,
+          ]}
           activeOpacity={0.85}
         >
           <MaterialCommunityIcons
@@ -199,16 +487,13 @@ const VoiceRAGChat: React.FC<Props> = ({
           />
         </TouchableOpacity>
 
-        {/* Close (stop & save) */}
         <TouchableOpacity
-          onPress={stopRecordingNow}
+          onPress={onClose}
           style={styles.listenCancel}
           activeOpacity={0.85}
         >
           <AntDesign name="close" size={20} color="#202124" />
         </TouchableOpacity>
-
-        {/* If you prefer a separate "Stop" button, add it back here */}
       </View>
     </View>
   );
@@ -221,17 +506,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  topCenter: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
   listenHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     marginBottom: 8,
   },
-  listenHeader: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#202124",
-  },
+  listenHeader: { fontSize: 18, fontWeight: "700", color: "#202124" },
+  subText: { fontSize: 12, color: "#5F6368", marginTop: 2 },
+
   listenMic: {
     width: 50,
     height: 50,
@@ -240,7 +528,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "#1A73E8",
   },
-  listenTimer: { fontSize: 14, color: "#5F6368", marginTop: 6 },
+
+  listenMicLg: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+  },
+
+  listenHeaderBelow: {
+    marginTop: 10,
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#202124",
+    textAlign: "center",
+  },
+
   listenActions: {
     flexDirection: "row",
     gap: 12,
@@ -252,13 +554,6 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: "#F1F3F4",
   },
-  listenStop: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#EA4335",
-  },
-  listenStopText: { color: "white", fontWeight: "700" },
   listenMute: {
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -267,208 +562,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  listenMuteActive: {
-    backgroundColor: "#EA4335",
-  },
+  listenMuteActive: { backgroundColor: "#EA4335" },
 });
 
 export default VoiceRAGChat;
-
-// import { useSpeechToText } from "@/hooks/useSpeechToText";
-// import { useMuseumApi } from "@/lib/museumApi";
-// import { Audio } from "expo-av";
-// import * as FileSystem from "expo-file-system";
-// import React, { useEffect, useRef, useState } from "react";
-// import {
-//   ActivityIndicator,
-//   StyleSheet,
-//   Text,
-//   TouchableOpacity,
-//   View,
-// } from "react-native";
-
-// type Props = {
-//   visible: boolean;
-//   onClose: () => void;
-//   bottomPadding?: number;
-//   scanId: string;
-//   artworkId?: string | null;
-//   artistId?: string | null;
-//   voiceId?: string; // optional, server-side voice selector
-// };
-
-// const VoiceRAGChat: React.FC<Props> = ({
-//   visible,
-//   onClose,
-//   bottomPadding = 8,
-//   scanId,
-//   artworkId,
-//   artistId,
-//   voiceId,
-// }) => {
-//   const { postVoiceChat } = useMuseumApi();
-//   const { listening, partial, finalText, start, stop, cancel } =
-//     useSpeechToText();
-
-//   const [busy, setBusy] = useState(false);
-//   const [error, setError] = useState<string | null>(null);
-//   const soundRef = useRef<Audio.Sound | null>(null);
-
-//   // Prepare audio playback mode (no legacy interruption constants)
-//   useEffect(() => {
-//     Audio.setAudioModeAsync({
-//       // Playback should respect the iOS silent switch
-//       playsInSilentModeIOS: true,
-//       // We’re only playing (not recording), so leave recording off here
-//       allowsRecordingIOS: false,
-//       staysActiveInBackground: false,
-//       shouldDuckAndroid: true,
-//     }).catch(() => {});
-//   }, []);
-
-//   // Auto-start listening when this sheet becomes visible; cancel when closed
-//   useEffect(() => {
-//     let mounted = true;
-//     (async () => {
-//       if (visible) {
-//         setError(null);
-//         try {
-//           await start();
-//         } catch (e: any) {
-//           if (mounted) setError(e?.message ?? String(e));
-//         }
-//       } else {
-//         await cancel();
-//       }
-//     })();
-//     return () => {
-//       mounted = false;
-//     };
-//     // eslint-disable-next-line react-hooks/exhaustive-deps
-//   }, [visible]);
-
-//   // Cleanup sound on unmount
-//   useEffect(() => {
-//     return () => {
-//       if (soundRef.current) soundRef.current.unloadAsync().catch(() => {});
-//     };
-//   }, []);
-
-//   const playBase64Mp3 = async (b64: string) => {
-//     const fileUri = `${FileSystem.cacheDirectory}reply_${Date.now()}.mp3`;
-//     await FileSystem.writeAsStringAsync(fileUri, b64, {
-//       encoding: FileSystem.EncodingType.Base64,
-//     });
-//     if (soundRef.current) {
-//       try {
-//         await soundRef.current.unloadAsync();
-//       } catch {}
-//     }
-//     const { sound } = await Audio.Sound.createAsync({ uri: fileUri });
-//     soundRef.current = sound;
-//     await sound.playAsync();
-//   };
-
-//   const sendTranscript = async (text: string) => {
-//     if (!text.trim()) return;
-//     setBusy(true);
-//     setError(null);
-//     try {
-//       const resp = await postVoiceChat({
-//         scan_id: scanId,
-//         artwork_id: artworkId ?? undefined,
-//         artist_id: artistId ?? undefined,
-//         prompt: text, // TEXT ONLY; server returns base64 MP3
-//         voice_id: voiceId,
-//       });
-//       await playBase64Mp3(resp.audio_b64);
-//     } catch (e: any) {
-//       setError(e?.message ?? String(e));
-//     } finally {
-//       setBusy(false);
-//     }
-//   };
-
-//   const onPressMain = async () => {
-//     if (listening) {
-//       // stop listening → wait for transcript → ask server → play reply
-//       const text = await stop();
-//       await sendTranscript(text);
-//     } else {
-//       // if user stopped listening previously, let them speak again
-//       setError(null);
-//       await start();
-//     }
-//   };
-
-//   if (!visible) return null;
-
-//   const display = listening
-//     ? partial || "Listening…"
-//     : finalText
-//     ? `You said: ${finalText}`
-//     : "";
-
-//   return (
-//     <View style={[styles.container, { paddingBottom: bottomPadding }]}>
-//       <Text style={styles.title}>Voice conversation</Text>
-//       {!!display && <Text style={styles.hint}>{display}</Text>}
-//       {!!error && <Text style={styles.error}>{error}</Text>}
-
-//       <View style={{ height: 16 }} />
-
-//       <TouchableOpacity
-//         style={[
-//           styles.button,
-//           { backgroundColor: listening ? "#EA4335" : "#1A73E8" },
-//         ]}
-//         onPress={onPressMain}
-//         disabled={busy}
-//       >
-//         {busy ? (
-//           <ActivityIndicator color="white" />
-//         ) : (
-//           <Text style={styles.buttonText}>
-//             {listening ? "Stop & Ask" : "Tap to Speak"}
-//           </Text>
-//         )}
-//       </TouchableOpacity>
-
-//       <View style={{ height: 12 }} />
-//       <TouchableOpacity
-//         style={styles.outline}
-//         onPress={onClose}
-//         disabled={busy || listening}
-//       >
-//         <Text style={styles.outlineText}>Close</Text>
-//       </TouchableOpacity>
-//     </View>
-//   );
-// };
-
-// const styles = StyleSheet.create({
-//   container: { paddingHorizontal: 16, paddingTop: 8 },
-//   title: { fontSize: 16, fontWeight: "700" },
-//   hint: { marginTop: 6, color: "#5F6368" },
-//   error: { color: "red", marginTop: 8 },
-//   button: {
-//     paddingHorizontal: 14,
-//     paddingVertical: 14,
-//     borderRadius: 12,
-//     alignItems: "center",
-//     justifyContent: "center",
-//   },
-//   buttonText: { color: "white", fontWeight: "700" },
-//   outline: {
-//     paddingHorizontal: 14,
-//     paddingVertical: 14,
-//     borderRadius: 12,
-//     alignItems: "center",
-//     justifyContent: "center",
-//     borderColor: "#1A73E8",
-//     borderWidth: 1,
-//   },
-//   outlineText: { color: "#1A73E8", fontWeight: "700" },
-// });
-
-// export default VoiceRAGChat;

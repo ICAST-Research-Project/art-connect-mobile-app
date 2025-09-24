@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useState } from "react";
 
 const useFetch = <T>(fetchFunction: () => Promise<T>, autoFetch = true) => {
@@ -14,7 +15,6 @@ const useFetch = <T>(fetchFunction: () => Promise<T>, autoFetch = true) => {
 
       setData(result);
     } catch (err) {
-      // @ts-ignore
       setError(err instanceof Error ? err : new Error("An error occured"));
     } finally {
       setLoading(false);
