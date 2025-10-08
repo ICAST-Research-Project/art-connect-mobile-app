@@ -1,15 +1,16 @@
+import { Collection, fetchCollections } from "@/services/api";
+import useFetch from "@/services/useFetch";
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React from "react";
 import {
-  View,
-  Text,
-  Image,
   ActivityIndicator,
   FlatList,
+  Image,
+  Text,
   TouchableOpacity,
+  View,
 } from "react-native";
-import { fetchCollections, Collection } from "@/services/api";
-import useFetch from "@/services/useFetch";
 
 export default function MuseumCollectionsPage() {
   const router = useRouter();
@@ -33,7 +34,7 @@ export default function MuseumCollectionsPage() {
     <View className="flex-1 bg-white">
       <View className="px-6 pt-6 pb-4">
         <TouchableOpacity onPress={() => router.back()} className="mb-3">
-          <Text className="text-blue-600">← Back</Text>
+          <Ionicons name="chevron-back" size={22} color="#2563eb" />
         </TouchableOpacity>
 
         <View className="flex-row items-center justify-between">

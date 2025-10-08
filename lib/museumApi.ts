@@ -87,9 +87,24 @@ export type VoiceChatResponsePayload = {
 export function useMuseumApi() {
   const { getToken } = useAuth();
 
-  async function authHeaders(base?: HeadersInit) {
+  // async function authHeaders(base?: HeadersInit) {
+  //   const t = await getToken();
+  //   return { ...(base || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+  // }
+  async function authHeaders(
+    base?: HeadersInit,
+    opts?: { useAltHeader?: boolean }
+  ) {
     const t = await getToken();
-    return { ...(base || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+    const h: Record<string, string> = { ...(base as any) };
+    if (t) {
+      if (opts?.useAltHeader) {
+        h["X-Client-Auth"] = `Bearer ${t}`; // <<— use this
+      } else {
+        h["Authorization"] = `Bearer ${t}`; // default path (kept for local/dev)
+      }
+    }
+    return h;
   }
 
   async function searchImageFromUri(
@@ -112,7 +127,7 @@ export function useMuseumApi() {
 
     const res = await fetch(`${API_BASE_URL}/search-image?${qs.toString()}`, {
       method: "POST",
-      headers: await authHeaders(),
+      headers: await authHeaders(undefined, { useAltHeader: true }),
       body: form,
     });
 

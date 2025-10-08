@@ -1,5 +1,6 @@
 import { CollectionDetail, fetchCollectionById } from "@/services/api";
 import useFetch from "@/services/useFetch";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback } from "react";
@@ -72,7 +73,7 @@ export default function CollectionDetailPage() {
           }}
           className="mb-3"
         >
-          <Text className="text-blue-600">← Back</Text>
+          <Ionicons name="chevron-back" size={22} color="#2563eb" />
         </TouchableOpacity>
 
         <Text className="text-2xl font-extrabold">

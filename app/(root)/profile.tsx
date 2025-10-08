@@ -1,49 +1,100 @@
+import ChatHistory from "@/components/ChatHistory";
 import { SignedIn, useAuth, useUser } from "@clerk/clerk-expo";
+import { Ionicons } from "@expo/vector-icons"; // ← NEW
+import { Image as ExpoImage } from "expo-image";
 import { router } from "expo-router";
 import React from "react";
-import { Image, Text, TouchableOpacity, View } from "react-native";
+import { Text, TouchableOpacity, View } from "react-native";
 
 const Profile = () => {
   const { user } = useUser();
   const { signOut } = useAuth();
+
+  const fullName = user?.fullName || "Anonymous User";
+  const email = user?.emailAddresses?.[0]?.emailAddress || "—";
+
   return (
-    <View>
+    <View className="flex-1 bg-[#F7F7F8]">
       <SignedIn>
-        <View className="px-6 pt-6 pb-4">
-          <TouchableOpacity onPress={() => router.back()} className="mb-3">
-            <Text className="text-blue-600">← Back</Text>
-          </TouchableOpacity>
-          <View className="flex items-center gap-4 mt-4 mb-4">
-            <Text>Full Name: {user?.fullName}</Text>
-            <Text>Email: {user?.emailAddresses[0].emailAddress}</Text>
-          </View>
-          <View className="flex items-center">
-            {user?.imageUrl && (
-              <Image
-                source={{ uri: user.imageUrl }}
-                className="w-20 h-20 rounded-full mb-2.5"
-              />
-            )}
-          </View>
-        </View>
-        <View className="flex items-center">
+        <View className="px-4 pt-5 pb-3 flex-row items-center justify-between">
           <TouchableOpacity
-            className="bg-red-500 px-2 py-2 rounded-lg"
-            onPress={() => signOut()}
+            onPress={() => router.back()}
+            className="px-2 py-1 -ml-2"
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Text className="text-white text-lg font-semibold">Log out</Text>
+            <View className="w-9 h-9  bg-blue-50 items-center justify-center">
+              <Ionicons name="chevron-back" size={22} color="#2563eb" />
+            </View>
           </TouchableOpacity>
+
+          <Text className="text-2xl font-extrabold">Profile</Text>
+
+          <View style={{ width: 36 }} />
         </View>
-        <View className="flex items-center mt-6 gap-2">
-          <Text className="font-bold">
-            Feel free to contact if you have any questions?
-          </Text>
-          <Text className="font-medium text-gray-500">
+
+        <View
+          className="mx-4 mb-4 p-5  bg-white border border-gray-100"
+          style={{
+            shadowColor: "#000",
+            shadowOpacity: 0.06,
+            shadowRadius: 8,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 2,
+          }}
+        >
+          <View className="items-center">
+            {user?.imageUrl ? (
+              <ExpoImage
+                source={{ uri: user.imageUrl }}
+                style={{
+                  width: 104,
+                  height: 104,
+                  borderRadius: 9999,
+                  backgroundColor: "#EEE",
+                }}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={120}
+              />
+            ) : (
+              <View className="w-26 h-26 rounded-full bg-gray-200 items-center justify-center" />
+            )}
+
+            <Text className="text-xl font-bold mt-3">{fullName}</Text>
+            <Text className="text-gray-500 mt-1">{email}</Text>
+
+            <View className="flex-row gap-3 mt-4">
+              <TouchableOpacity
+                className="px-4 py-2  bg-red-500"
+                activeOpacity={0.8}
+                onPress={() => signOut()}
+              >
+                <Text className="text-white font-semibold">Log out</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
+        {/* <View
+          className="mx-4 mb-4 p-4  bg-white border border-gray-100"
+          style={{
+            shadowColor: "#000",
+            shadowOpacity: 0.04,
+            shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 1,
+          }}
+        >
+          <Text className="font-semibold text-base">Need help?</Text>
+          <Text className="text-gray-500 mt-1">
             Email: ourchidlab@gmail.com
           </Text>
-        </View>
-        <View className="px-6 pt-6">
-          <Text>Show Chat History</Text>
+        </View> */}
+
+        {/* Recent chats */}
+        <View className="flex-1 pt-2">
+          <ChatHistory />
         </View>
       </SignedIn>
     </View>
