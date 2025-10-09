@@ -1,14 +1,23 @@
 import ChatHistory from "@/components/ChatHistory";
 import { SignedIn, useAuth, useUser } from "@clerk/clerk-expo";
-import { Ionicons } from "@expo/vector-icons"; // ← NEW
+import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native"; // ← add
 import { Image as ExpoImage } from "expo-image";
 import { router } from "expo-router";
 import React from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 
-const Profile = () => {
+export default function Profile() {
   const { user } = useUser();
   const { signOut } = useAuth();
+
+  const [refreshKey, setRefreshKey] = React.useState(0);
+  useFocusEffect(
+    React.useCallback(() => {
+      setRefreshKey((k) => k + 1);
+      return undefined;
+    }, [])
+  );
 
   const fullName = user?.fullName || "Anonymous User";
   const email = user?.emailAddresses?.[0]?.emailAddress || "—";
@@ -23,18 +32,17 @@ const Profile = () => {
             activeOpacity={0.7}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <View className="w-9 h-9  bg-blue-50 items-center justify-center">
+            <View className="w-9 h-9 bg-blue-50 items-center justify-center">
               <Ionicons name="chevron-back" size={22} color="#2563eb" />
             </View>
           </TouchableOpacity>
 
           <Text className="text-2xl font-extrabold">Profile</Text>
-
           <View style={{ width: 36 }} />
         </View>
 
         <View
-          className="mx-4 mb-4 p-5  bg-white border border-gray-100"
+          className="mx-4 mb-4 p-5 bg-white border border-gray-100"
           style={{
             shadowColor: "#000",
             shadowOpacity: 0.06,
@@ -66,7 +74,7 @@ const Profile = () => {
 
             <View className="flex-row gap-3 mt-4">
               <TouchableOpacity
-                className="px-4 py-2  bg-red-500"
+                className="px-4 py-2 bg-red-500"
                 activeOpacity={0.8}
                 onPress={() => signOut()}
               >
@@ -76,29 +84,10 @@ const Profile = () => {
           </View>
         </View>
 
-        {/* <View
-          className="mx-4 mb-4 p-4  bg-white border border-gray-100"
-          style={{
-            shadowColor: "#000",
-            shadowOpacity: 0.04,
-            shadowRadius: 6,
-            shadowOffset: { width: 0, height: 2 },
-            elevation: 1,
-          }}
-        >
-          <Text className="font-semibold text-base">Need help?</Text>
-          <Text className="text-gray-500 mt-1">
-            Email: ourchidlab@gmail.com
-          </Text>
-        </View> */}
-
-        {/* Recent chats */}
         <View className="flex-1 pt-2">
-          <ChatHistory />
+          <ChatHistory key={refreshKey} />
         </View>
       </SignedIn>
     </View>
   );
-};
-
-export default Profile;
+}
