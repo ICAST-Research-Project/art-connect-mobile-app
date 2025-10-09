@@ -30,11 +30,12 @@ type Props = {
 type Phase = "listening" | "processing" | "playing";
 
 // ---- VAD tuning ----
-const SILENCE_DB = -45;
+const SILENCE_DB = -30;
 const SILENCE_MS = 1400;
 const POLL_MS = 120;
 const MIN_SPEECH_MS = 450;
 const START_GRACE_MS = 400;
+const NO_SPEECH_TIMEOUT_MS = 5000; // stop if nothing for 5s
 
 const VoiceRAGChat: React.FC<Props> = ({
   visible,

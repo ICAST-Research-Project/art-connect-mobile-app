@@ -689,7 +689,7 @@ const PhotoRAGChat = ({
                     ]}
                     disabled={loading || chatLoading}
                   >
-                    <AntDesign name="arrowup" size={16} color="white" />
+                    <AntDesign name="arrow-up" size={16} color="white" />
                   </TouchableOpacity>
                 </View>
               )}
