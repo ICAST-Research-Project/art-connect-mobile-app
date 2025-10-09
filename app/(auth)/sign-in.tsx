@@ -1,15 +1,16 @@
-import React, { useCallback, useEffect } from "react";
-import * as WebBrowser from "expo-web-browser";
-import * as AuthSession from "expo-auth-session";
 import { useSSO } from "@clerk/clerk-expo";
+import { Ionicons } from "@expo/vector-icons";
+import * as AuthSession from "expo-auth-session";
+import { useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
+import React, { useCallback, useEffect } from "react";
 import {
-  View,
+  ActivityIndicator,
+  Alert,
   Text,
   TouchableOpacity,
-  Alert,
-  ActivityIndicator,
+  View,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 
 export const useWarmUpBrowser = () => {
   useEffect(() => {
@@ -26,6 +27,7 @@ export default function Page() {
   useWarmUpBrowser();
   const { startSSOFlow } = useSSO();
   const [loading, setLoading] = React.useState(false);
+  const router = useRouter();
 
   const onPress = useCallback(async () => {
     try {
@@ -55,6 +57,7 @@ export default function Page() {
 
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
+        router.replace("/");
       } else if (signIn || signUp) {
         console.log("Additional flow required:", { signIn, signUp });
       } else {
