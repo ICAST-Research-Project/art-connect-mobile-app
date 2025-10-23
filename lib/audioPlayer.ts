@@ -54,7 +54,7 @@ export async function playBase64Audio(b64: string, mime = "audio/mpeg") {
   }
 
   await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
+    allowsRecordingIOS: false,
     playsInSilentModeIOS: true,
     staysActiveInBackground: false,
     shouldDuckAndroid: true,

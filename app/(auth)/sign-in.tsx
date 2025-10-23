@@ -33,8 +33,8 @@ export default function Page() {
     try {
       setLoading(true);
       const redirectUrl = AuthSession.makeRedirectUri({
-        scheme: "mobile", // must match app.json scheme
-        path: "oauth-callback",
+        scheme: "mobile",
+        path: "sso-callback",
       });
 
       console.log("Using redirect URI:", redirectUrl);
@@ -74,7 +74,7 @@ export default function Page() {
   return (
     <View className="flex-1 justify-center items-center p-4 bg-white">
       <Text className="font-extrabold text-blue-600 mb-4 text-lg">
-        Get started with ArtInVision
+        Get started with Art Connect
       </Text>
 
       <TouchableOpacity
@@ -87,7 +87,7 @@ export default function Page() {
           {loading ? (
             <ActivityIndicator />
           ) : (
-            <Ionicons name="logo-google" size={28} color="#4285F4" />
+            <Ionicons name="logo-google" size={28} color="#f48f42ff" />
           )}
         </View>
 

@@ -12,7 +12,9 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "$(mobile) needs access to your Camera.",
-        "NSMicrophoneUsageDescription": "$(mobile) needs access to your Microphone."
+        "NSMicrophoneUsageDescription": "$(mobile) needs access to your Microphone.",
+        "NSSpeechRecognitionUsageDescription": "$(mobile) needs access to speech recognition for voice features and accessibility.",
+        "NSPhotoLibraryUsageDescription": "$(mobile) needs access to your photo library to select and upload images."
       },
       "bundleIdentifier": "com.thenischal.mobile"
     },
@@ -25,7 +27,8 @@
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "package": "com.thenischal.mobile"
     },
@@ -59,6 +62,7 @@
           "microphonePermission": "Allow $(mobile) to access your microphone."
         }
       ],
+      "expo-av",
       "expo-secure-store",
       "expo-font",
       "expo-web-browser"
@@ -69,8 +73,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "art-connect-ou"
+        "projectId": "94524b0f-a3c9-44a5-8a19-3bc0b4773fab"
       }
-    }
+    },
+    "owner": "ourchidlab"
   }
 }

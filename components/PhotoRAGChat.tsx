@@ -17,7 +17,6 @@ import {
   Dimensions,
   Image,
   Keyboard,
-  KeyboardAvoidingView,
   PanResponder,
   Platform,
   ScrollView,
@@ -51,15 +50,6 @@ type ChatMessage = {
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
-const SHEET_HEIGHT = Math.max(400, Math.floor(SCREEN_HEIGHT * 0.55));
-const PEEK = 490;
-const TRANSLATE_COLLAPSED = SHEET_HEIGHT - PEEK;
-
-const TRANSLATE_EXPANDED = 0;
-const TRANSLATE_MID = Math.floor(
-  (TRANSLATE_COLLAPSED + TRANSLATE_EXPANDED) / 2
-);
-
 const SUGGESTIONS = [
   "What is the significance of this work?",
   "Materials & technique?",
@@ -84,12 +74,32 @@ const PhotoRAGChat = ({
   const [chatError, setChatError] = useState<string | null>(null);
   const [lastAnswer, setLastAnswer] = useState<string | null>(null);
 
+  // --- Dynamic sheet geometry based on whether conversation exists ---
+  const hasConversation = messages.length > 0;
+
+  const sheetHeight = useMemo(() => {
+    return hasConversation
+      ? Math.max(400, Math.floor(SCREEN_HEIGHT * 0.22))
+      : Math.max(100, Math.floor(SCREEN_HEIGHT * 0.22));
+  }, [hasConversation]);
+
+  const peekVisible = useMemo(
+    () => (hasConversation ? 400 : 200),
+    [hasConversation]
+  );
+
+  const TRANSLATE_EXPANDED = 0;
+  const TRANSLATE_COLLAPSED = sheetHeight - peekVisible;
+  const TRANSLATE_MID = Math.floor(
+    (TRANSLATE_COLLAPSED + TRANSLATE_EXPANDED) / 2
+  );
+
+  // Animated position
   const translateY = useRef(new Animated.Value(TRANSLATE_COLLAPSED)).current;
   const dragStart = useRef(TRANSLATE_COLLAPSED);
 
   const [kbHeight, setKbHeight] = useState(0);
   const [kbVisible, setKbVisible] = useState(false);
-
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const scrollViewRef = useRef<ScrollView>(null);
@@ -104,6 +114,15 @@ const PhotoRAGChat = ({
       scrollViewRef.current.scrollToEnd({ animated: true });
     }
   }, [messages]);
+
+  useEffect(() => {
+    const target = hasConversation ? TRANSLATE_MID : TRANSLATE_COLLAPSED;
+    Animated.spring(translateY, {
+      toValue: target,
+      useNativeDriver: true,
+      bounciness: 6,
+    }).start(() => (dragStart.current = target));
+  }, [sheetHeight, peekVisible, hasConversation]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,12 +164,24 @@ const PhotoRAGChat = ({
   useEffect(() => {
     if (search && !loading) {
       Animated.spring(translateY, {
-        toValue: TRANSLATE_MID,
+        toValue: hasConversation ? TRANSLATE_MID : TRANSLATE_COLLAPSED,
         useNativeDriver: true,
         bounciness: 6,
-      }).start(() => (dragStart.current = TRANSLATE_MID));
+      }).start(
+        () =>
+          (dragStart.current = hasConversation
+            ? TRANSLATE_MID
+            : TRANSLATE_COLLAPSED)
+      );
     }
-  }, [search, loading, translateY]);
+  }, [
+    search,
+    loading,
+    hasConversation,
+    TRANSLATE_MID,
+    TRANSLATE_COLLAPSED,
+    translateY,
+  ]);
 
   useEffect(() => {
     const onShow = (e: any) => {
@@ -158,6 +189,7 @@ const PhotoRAGChat = ({
       const h = e?.endCoordinates?.height ?? 0;
       setKbHeight(h);
       setKeyboardHeight(h);
+
       Animated.spring(translateY, {
         toValue: TRANSLATE_EXPANDED,
         useNativeDriver: true,
@@ -169,11 +201,14 @@ const PhotoRAGChat = ({
       setKbVisible(false);
       setKbHeight(0);
       setKeyboardHeight(0);
+      const targetPosition = hasConversation
+        ? TRANSLATE_MID
+        : TRANSLATE_COLLAPSED;
       Animated.spring(translateY, {
-        toValue: TRANSLATE_COLLAPSED,
+        toValue: targetPosition,
         useNativeDriver: true,
         bounciness: 6,
-      }).start(() => (dragStart.current = TRANSLATE_COLLAPSED));
+      }).start(() => (dragStart.current = targetPosition));
     };
 
     const show = Keyboard.addListener(
@@ -188,10 +223,15 @@ const PhotoRAGChat = ({
       show.remove();
       hide.remove();
     };
-  }, [translateY]);
+  }, [translateY, hasConversation]);
 
-  const sheetBottom =
-    Platform.OS === "ios" ? 0 : kbVisible ? keyboardHeight : 0;
+  const KB_EXTRA_LIFT = 22;
+
+  const sheetBottom = kbVisible
+    ? Platform.OS === "ios"
+      ? keyboardHeight - (insets.bottom || 0) + KB_EXTRA_LIFT
+      : keyboardHeight + KB_EXTRA_LIFT
+    : 0;
 
   const panResponder = useMemo(
     () =>
@@ -204,10 +244,10 @@ const PhotoRAGChat = ({
         onPanResponderMove: (_, g) => {
           if (kbVisible) return;
           const next = dragStart.current + g.dy;
-          const clamped = Math.max(
-            TRANSLATE_EXPANDED,
-            Math.min(TRANSLATE_COLLAPSED, next)
-          );
+
+          const low = Math.min(TRANSLATE_EXPANDED, TRANSLATE_COLLAPSED);
+          const high = Math.max(TRANSLATE_EXPANDED, TRANSLATE_COLLAPSED);
+          const clamped = Math.max(low, Math.min(high, next));
           translateY.setValue(clamped);
         },
         onPanResponderRelease: (_, g) => {
@@ -239,8 +279,27 @@ const PhotoRAGChat = ({
           }).start(() => (dragStart.current = target));
         },
       }),
-    [translateY, kbVisible]
+    [translateY, kbVisible, TRANSLATE_COLLAPSED, TRANSLATE_MID]
   );
+
+  const topResult = search?.results?.[0] ?? null;
+  const isMatch = !!search?.decision?.is_match;
+  const topArtistName = topResult?.artist_name ?? null;
+
+  const bubbleText = loading
+    ? "Analyzing your photo…"
+    : error
+    ? "Hmm, I couldn’t analyze that photo. Retake or tap Retry."
+    : isMatch && topArtistName
+    ? `This is an artwork by ${topArtistName}. What would you like to know more about it?`
+    : search
+    ? "I couldn’t identify this artwork. Please try scanning once more or we may do have information on this."
+    : "What would you like to know about it?";
+
+  const showChatControls = isMatch && !loading && !error;
+
+  const [footerH, setFooterH] = useState(0);
+  const hasIntro = messages.length === 0 && showChatControls;
 
   const handleSend = async (msg?: string) => {
     const toSend = (msg ?? text).trim();
@@ -341,26 +400,6 @@ const PhotoRAGChat = ({
   };
   const handleVoiceClose = () => setVoiceVisible(false);
 
-  const topResult = search?.results?.[0] ?? null;
-  const isMatch = !!search?.decision?.is_match;
-  const topArtistName = topResult?.artist_name ?? null;
-
-  const bubbleText = loading
-    ? "Analyzing your photo…"
-    : error
-    ? "Hmm, I couldn’t analyze that photo. Retake or tap Retry."
-    : isMatch && topArtistName
-    ? `This is an artwork by ${topArtistName}. What would you like to know more about it?`
-    : search
-    ? "I couldn’t identify this artwork. Please try scanning once more or we may do have information on this."
-    : "What would you like to know about it?";
-
-  const showChatControls = isMatch && !loading && !error;
-
-  const bubbleMaxHeight = showChatControls
-    ? SHEET_HEIGHT - 160
-    : SHEET_HEIGHT - 120;
-
   const pushVoiceTurn = (transcript: string, answer: string) => {
     if (transcript?.trim()) {
       setMessages((prev) => [
@@ -369,7 +408,7 @@ const PhotoRAGChat = ({
           id: `user_voice_${Date.now()}`,
           role: "user",
           text: transcript.trim(),
-          channel: "voice", // 👈 tag
+          channel: "voice",
         },
       ]);
     }
@@ -380,7 +419,7 @@ const PhotoRAGChat = ({
           id: `bot_voice_${Date.now() + 1}`,
           role: "assistant",
           text: answer.trim(),
-          channel: "voice", // 👈 tag
+          channel: "voice",
         },
       ]);
     }
@@ -421,17 +460,13 @@ const PhotoRAGChat = ({
         style={[
           styles.sheetContainer,
           {
-            height: SHEET_HEIGHT,
+            height: sheetHeight, // dynamic
             bottom: sheetBottom,
             transform: [{ translateY }],
           },
         ]}
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          keyboardVerticalOffset={Platform.OS === "ios" ? insets.top || 0 : 0}
-          style={{ flex: 1 }}
-        >
+        <View style={{ flex: 1 }}>
           <View
             {...panResponder.panHandlers}
             style={styles.handleArea}
@@ -474,11 +509,6 @@ const PhotoRAGChat = ({
                 <View style={{ paddingHorizontal: 12, paddingVertical: 2 }}>
                   <View style={styles.noMatchCard}>
                     <Text style={styles.noMatchTitle}>No Match Found!</Text>
-                    {/* {search.decision.reason ? (
-                    <Text style={styles.noMatchReason}>
-                      Reason: {search.decision.reason}
-                    </Text>
-                  ) : null} */}
 
                     <View style={styles.actionRow}>
                       <TouchableOpacity
@@ -518,18 +548,30 @@ const PhotoRAGChat = ({
                 </View>
               )}
 
+              {/* Messages list */}
               <ScrollView
                 ref={scrollViewRef}
-                style={{ flexGrow: 0, maxHeight: bubbleMaxHeight }}
-                contentContainerStyle={{
-                  paddingBottom: 8,
-                  paddingHorizontal: 8,
-                }}
+                style={{ flex: 1 }}
+                contentContainerStyle={[
+                  { flexGrow: 1, paddingHorizontal: 8 },
+                  hasIntro
+                    ? {
+                        justifyContent: "flex-end",
+                        paddingBottom: Math.max(footerH - 6, 0),
+                      }
+                    : {
+                        paddingBottom: showChatControls
+                          ? footerH
+                          : Math.max(insets.bottom, 8),
+                      },
+                ]}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
               >
                 {messages.length === 0 && (
-                  <View style={styles.rowLeft}>
+                  <View
+                    style={[styles.rowLeft, { marginTop: 0, marginBottom: 12 }]}
+                  >
                     <MaterialCommunityIcons
                       name="robot-outline"
                       size={28}
@@ -621,81 +663,99 @@ const PhotoRAGChat = ({
                 })}
               </ScrollView>
 
-              {showChatControls && (
-                <ScrollView
-                  horizontal
-                  style={styles.suggestionsScroll}
-                  contentContainerStyle={styles.suggestionsRow}
-                  showsHorizontalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
-                  fadingEdgeLength={Platform.OS === "android" ? 30 : 0}
+              {/* Footer pinned to bottom (suggestions + input) */}
+              {showChatControls ? (
+                <View
+                  style={styles.footer}
+                  onLayout={(e) => setFooterH(e.nativeEvent.layout.height)}
                 >
-                  {SUGGESTIONS.map((s) => (
+                  <ScrollView
+                    horizontal
+                    style={[
+                      styles.suggestionsScroll,
+                      hasIntro && { marginTop: 2 },
+                    ]}
+                    contentContainerStyle={styles.suggestionsRow}
+                    showsHorizontalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                    fadingEdgeLength={Platform.OS === "android" ? 30 : 0}
+                  >
+                    {SUGGESTIONS.map((s) => (
+                      <TouchableOpacity
+                        key={s}
+                        onPress={() => handleSend(s)}
+                        style={styles.suggestion}
+                        activeOpacity={0.85}
+                        disabled={loading}
+                      >
+                        <Text style={styles.suggestionText}>{s}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  <View
+                    style={[
+                      styles.inputRow,
+                      {
+                        paddingBottom: kbVisible
+                          ? 8
+                          : Math.max(insets.bottom, 8),
+                      },
+                    ]}
+                  >
+                    <TextInput
+                      placeholder="Ask anything"
+                      placeholderTextColor="#9AA0A6"
+                      value={text}
+                      onChangeText={setText}
+                      style={styles.input}
+                      returnKeyType="send"
+                      onSubmitEditing={() => handleSend()}
+                      editable={!loading}
+                      onFocus={() => {
+                        if (!kbVisible && messages.length > 0) {
+                          Animated.spring(translateY, {
+                            toValue: TRANSLATE_EXPANDED,
+                            useNativeDriver: true,
+                            bounciness: 6,
+                          }).start(
+                            () => (dragStart.current = TRANSLATE_EXPANDED)
+                          );
+                        }
+                        setTimeout(() => {
+                          scrollViewRef.current?.scrollToEnd({
+                            animated: true,
+                          });
+                        }, 100);
+                      }}
+                    />
+
                     <TouchableOpacity
-                      key={s}
-                      onPress={() => handleSend(s)}
-                      style={styles.suggestion}
-                      activeOpacity={0.85}
+                      onPress={handleMicPress}
+                      activeOpacity={0.8}
+                      style={[styles.iconButton, loading && { opacity: 0.5 }]}
                       disabled={loading}
                     >
-                      <Text style={styles.suggestionText}>{s}</Text>
+                      <MaterialCommunityIcons name="microphone" size={20} />
                     </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              )}
 
-              {showChatControls && (
-                <View
-                  style={[
-                    styles.inputRow,
-                    {
-                      paddingBottom: kbVisible ? 8 : Math.max(insets.bottom, 8),
-                    },
-                  ]}
-                >
-                  <TextInput
-                    placeholder="Ask anything"
-                    placeholderTextColor="#9AA0A6"
-                    value={text}
-                    onChangeText={setText}
-                    style={styles.input}
-                    returnKeyType="send"
-                    onSubmitEditing={() => handleSend()}
-                    editable={!loading}
-                    onFocus={() => {
-                      Animated.spring(translateY, {
-                        toValue: TRANSLATE_EXPANDED,
-                        useNativeDriver: true,
-                        bounciness: 6,
-                      }).start(() => (dragStart.current = TRANSLATE_EXPANDED));
-                    }}
-                  />
-
-                  <TouchableOpacity
-                    onPress={handleMicPress}
-                    activeOpacity={0.8}
-                    style={[styles.iconButton, loading && { opacity: 0.5 }]}
-                    disabled={loading}
-                  >
-                    <MaterialCommunityIcons name="microphone" size={20} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    onPress={() => handleSend()}
-                    activeOpacity={0.8}
-                    style={[
-                      styles.sendButton,
-                      (loading || chatLoading) && { opacity: 0.5 },
-                    ]}
-                    disabled={loading || chatLoading}
-                  >
-                    <AntDesign name="arrow-up" size={16} color="white" />
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => handleSend()}
+                      activeOpacity={0.8}
+                      style={[
+                        styles.sendButton,
+                        (loading || chatLoading) && { opacity: 0.5 },
+                      ]}
+                      disabled={loading || chatLoading}
+                    >
+                      <AntDesign name="arrow-up" size={16} color="white" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              )}
+              ) : null}
             </View>
           )}
-        </KeyboardAvoidingView>
+        </View>
       </Animated.View>
     </SafeAreaView>
   );
@@ -739,7 +799,15 @@ const styles = StyleSheet.create({
   handleArea: { paddingTop: 10, paddingBottom: 12, alignItems: "center" },
   handle: { width: 44, height: 4, borderRadius: 2, backgroundColor: "#DADCE0" },
 
-  sheetInner: { paddingHorizontal: 12 },
+  sheetInner: { flex: 1, paddingHorizontal: 12, paddingTop: 0 },
+
+  footer: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    bottom: 0,
+    backgroundColor: "white",
+  },
 
   row: {
     flexDirection: "row",
@@ -756,13 +824,13 @@ const styles = StyleSheet.create({
   },
   bubbleTextBot: {
     color: "#202124",
-    fontSize: 14,
-    textAlign: "justify",
+    fontSize: 16,
+    textAlign: "left",
     lineHeight: 20,
   },
 
-  suggestionsScroll: { marginTop: 8, marginBottom: 6 },
-  suggestionsRow: { paddingHorizontal: 8, alignItems: "center" },
+  suggestionsScroll: { marginTop: 6, marginBottom: 6 },
+  suggestionsRow: { paddingHorizontal: 6, alignItems: "center" },
   suggestion: {
     backgroundColor: "#F1F3F4",
     borderRadius: 999,

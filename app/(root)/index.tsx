@@ -38,7 +38,7 @@ export default function Page() {
             <View>
               <Text className="text-lg">Hello {user?.fullName},</Text>
               <Text className="font-extrabold text-2xl">
-                Welcome to ArtInVision
+                Welcome to Art Connect
               </Text>
             </View>
             {user?.imageUrl && (

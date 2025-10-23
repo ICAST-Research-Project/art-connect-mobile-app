@@ -132,6 +132,31 @@ const VoiceRAGChat: React.FC<Props> = ({
     recordingRef.current = null;
   };
 
+  // Add these helpers near the top (below refs)
+  async function setModeListeningIOS() {
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true, // critical: record mode
+        playsInSilentModeIOS: true, // respect silent switch
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false, // android-only, harmless on iOS
+      });
+    } catch {}
+  }
+
+  async function setModePlaybackIOS() {
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false, // critical: playback mode -> speaker
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+    } catch {}
+  }
+
   // ---------- recording with metering ----------
   const beginRecording = async () => {
     // Respect global active guard
@@ -152,6 +177,8 @@ const VoiceRAGChat: React.FC<Props> = ({
       });
 
       if (!isActiveRef.current) return;
+
+      await setModeListeningIOS();
 
       const rec = new Audio.Recording();
       await rec.prepareToRecordAsync({
@@ -312,6 +339,8 @@ const VoiceRAGChat: React.FC<Props> = ({
 
       if (resp.audio_b64) {
         setPhase("playing");
+        await setModePlaybackIOS();
+        await new Promise((resolve) => setTimeout(resolve, 150));
         const sound = await playBase64Audio(
           resp.audio_b64,
           resp.mime ?? "audio/mpeg"
@@ -319,23 +348,28 @@ const VoiceRAGChat: React.FC<Props> = ({
         playingSoundRef.current = sound as Audio.Sound | null;
 
         if (playingSoundRef.current?.setOnPlaybackStatusUpdate) {
-          playingSoundRef.current.setOnPlaybackStatusUpdate((s: any) => {
+          playingSoundRef.current.setOnPlaybackStatusUpdate(async (s: any) => {
             if (!s?.isLoaded) return;
             if (s.didJustFinish) {
-              unloadPlayingSound().catch(() => {});
+              await unloadPlayingSound().catch(() => {});
               // only auto-resume if still visible
+              await setModeListeningIOS();
               if (isActiveRef.current) resumeAutoListening();
             }
           });
         } else {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          await setModeListeningIOS();
           if (isActiveRef.current) resumeAutoListening();
         }
       } else {
+        await setModeListeningIOS();
         if (isActiveRef.current) resumeAutoListening();
       }
     } catch (e) {
       console.warn("Voice send/play error:", e);
       Alert.alert("Sorry — I couldn’t process your voice message.");
+      await setModeListeningIOS();
       if (isActiveRef.current) resumeAutoListening();
     } finally {
       setSubmitting(false);
@@ -390,16 +424,45 @@ const VoiceRAGChat: React.FC<Props> = ({
   }, []);
 
   // ---------- controls ----------
+  // const toggleMute = async () => {
+  //   if (phase !== "listening" || !recordingRef.current) return;
+  //   try {
+  //     if (!muted) {
+  //       await recordingRef.current.pauseAsync();
+  //       setMuted(true);
+  //       setVoiceActive(false);
+  //       stopPulse();
+  //     } else {
+  //       await recordingRef.current.startAsync();
+  //       setMuted(false);
+  //       lastVoiceTimeRef.current = Date.now();
+  //     }
+  //   } catch (e) {
+  //     console.warn("Mute toggle error:", e);
+  //   }
+  // };
   const toggleMute = async () => {
-    if (phase !== "listening" || !recordingRef.current) return;
+    if (phase !== "listening") return;
+
+    const rec = recordingRef.current;
+    if (!rec) return;
+
     try {
       if (!muted) {
-        await recordingRef.current.pauseAsync();
+        await rec.pauseAsync();
         setMuted(true);
         setVoiceActive(false);
         stopPulse();
       } else {
-        await recordingRef.current.startAsync();
+        try {
+          await setModeListeningIOS();
+          await rec.startAsync();
+        } catch (e) {
+          console.warn("resume failed, rebuilding recorder:", e);
+          await hardStopRecording();
+          clearMeterTimer();
+          await beginRecording();
+        }
         setMuted(false);
         lastVoiceTimeRef.current = Date.now();
       }
@@ -407,12 +470,13 @@ const VoiceRAGChat: React.FC<Props> = ({
       console.warn("Mute toggle error:", e);
     }
   };
+
   const LABELS = {
-    listeningActive: "Listening", // was "Listening…"
-    listeningIdle: "Ask anything", // was "Waiting…"
-    listeningMuted: "Muted", // was "Paused"
-    processing: "Thinking…", // was "Answering…"
-    playing: "Speaking…", // was "Playing reply"
+    listeningActive: "Listening",
+    listeningIdle: "Ask anything",
+    listeningMuted: "Muted",
+    processing: "Thinking…",
+    playing: "Speaking…",
   } as const;
 
   const headerText =
@@ -482,7 +546,7 @@ const VoiceRAGChat: React.FC<Props> = ({
           activeOpacity={0.85}
         >
           <MaterialCommunityIcons
-            name="microphone-off"
+            name="microphone"
             size={22}
             color={muted ? "white" : "#202124"}
           />
@@ -537,7 +601,7 @@ const styles = StyleSheet.create({
   },
 
   listenHeaderBelow: {
-    marginTop: 10,
+    marginTop: 30,
     fontSize: 18,
     fontWeight: "700",
     color: "#202124",
@@ -546,18 +610,18 @@ const styles = StyleSheet.create({
 
   listenActions: {
     flexDirection: "row",
-    gap: 12,
-    marginTop: 12,
+    gap: 25,
+    marginTop: 20,
   },
   listenCancel: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     borderRadius: 999,
     backgroundColor: "#F1F3F4",
   },
   listenMute: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     borderRadius: 999,
     backgroundColor: "#F1F3F4",
     alignItems: "center",

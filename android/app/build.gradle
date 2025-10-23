@@ -4,6 +4,8 @@ apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
+
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -147,6 +149,14 @@ android {
     }
 }
 
+// ---- AndroidX migration guard: drop old support libs globally ----
+configurations.configureEach {
+  exclude group: 'com.android.support', module: 'support-compat'
+  exclude group: 'com.android.support', module: 'versionedparcelable'
+  exclude group: 'com.android.support'
+}
+
+
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
@@ -174,4 +184,9 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+    // ---- keep AndroidX versions present so Gradle resolves to them ----
+    implementation "androidx.core:core:1.16.0"
+    implementation "androidx.versionedparcelable:versionedparcelable:1.1.1"
+    implementation "com.google.android.material:material:1.12.0"
+
 }
