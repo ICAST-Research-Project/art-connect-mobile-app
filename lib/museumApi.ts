@@ -28,6 +28,7 @@ export type SearchFullResponse = {
   decision: SearchDecision;
   results: Neighbor[];
   scan_id?: string;
+  artwork_image_url?: string | null;
 };
 
 export type SearchImageParams = Partial<{
@@ -138,6 +139,52 @@ export function useMuseumApi() {
     return (await res.json()) as SearchFullResponse;
   }
 
+  /** Extract ?aid=... from a QR URL */
+  function parseAidFromUrl(input: string): string | null {
+    try {
+      const u = new URL(input);
+      return u.searchParams.get("aid");
+    } catch {
+      return null;
+    }
+  }
+
+  /** Search by QR (GET /search-qr?aid=...) */
+  async function searchQr(aid: string): Promise<SearchFullResponse> {
+    const url = `${API_BASE_URL}/search-qr?aid=${encodeURIComponent(aid)}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: await authHeaders(undefined, { useAltHeader: true }), // same auth style as image search
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`QR search failed: ${res.status} ${text}`);
+    }
+    return (await res.json()) as SearchFullResponse;
+  }
+
+  /** Convenience: call search-qr using the full QR URL string */
+  async function searchQrFromUrl(qrUrl: string): Promise<SearchFullResponse> {
+    const aid = parseAidFromUrl(qrUrl);
+    if (!aid) throw new Error("QR URL missing 'aid' parameter");
+    return searchQr(aid);
+  }
+
+  /** (Optional) One-shot helper: QR → search → start chat */
+  async function startChatFromQrUrl(qrUrl: string, question?: string) {
+    const resp = await searchQrFromUrl(qrUrl);
+    const top = resp.results?.[0];
+    return postChat({
+      question: question ?? "Tell me about this artwork.",
+      scan_id: resp.scan_id!, // FastAPI returns one in both image + QR flows
+      artwork_id: top?.artwork_id?.toString(),
+      artist_id: top?.artist_id ?? undefined,
+      top_k: 6,
+      metric: "cosine",
+      sim_threshold: 0.3,
+    });
+  }
+
   async function postChat(
     payload: ChatRequestPayload
   ): Promise<ChatResponsePayload> {
@@ -209,5 +256,15 @@ export function useMuseumApi() {
     return (await res.json()) as VoiceChatResponsePayload;
   }
 
-  return { searchImageFromUri, postChat, postVoiceChat, postVoiceChatFromFile };
+  // return { searchImageFromUri, postChat, postVoiceChat, postVoiceChatFromFile };
+
+  return {
+    searchImageFromUri,
+    searchQr,
+    searchQrFromUrl,
+    startChatFromQrUrl,
+    postChat,
+    postVoiceChat,
+    postVoiceChatFromFile,
+  };
 }
