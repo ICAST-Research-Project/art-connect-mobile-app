@@ -69,7 +69,7 @@ export default function Page() {
     } finally {
       setLoading(false);
     }
-  }, [startSSOFlow]);
+  }, [router, startSSOFlow]);
 
   return (
     <View className="flex-1 justify-center items-center p-4 bg-white">

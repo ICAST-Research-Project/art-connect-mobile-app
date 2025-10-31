@@ -46,17 +46,21 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your camera</string>
+    <string>Allow $(mobile) to access your camera</string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone</string>
-  <key>NSSpeechRecognitionUsageDescription</key>
-  <string>Allow $(PRODUCT_NAME) to use speech recognition for voice features and accessibility.</string>
-  <key>NSPhotoLibraryUsageDescription</key>
-  <string>Allow $(PRODUCT_NAME) to access your photo library to select and upload images.</string>
+    <string>Allow $(mobile) to access your microphone</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>$(mobile) needs access to your photo library to select and upload images.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>$(mobile) needs access to speech recognition for voice features and accessibility.</string>
     <key>NSUserActivityTypes</key>
     <array>
       <string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>
     </array>
+    <key>RCTNewArchEnabled</key>
+    <true/>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>

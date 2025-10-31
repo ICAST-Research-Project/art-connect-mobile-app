@@ -108,6 +108,38 @@ export function useMuseumApi() {
     return h;
   }
 
+  function sleep(ms: number) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  async function fetchWithRetry(
+    input: RequestInfo,
+    init: RequestInit,
+    tries = 3
+  ) {
+    let lastErr: any = null;
+    for (let i = 0; i < tries; i++) {
+      try {
+        const res = await fetch(input, init);
+        // Retry on 5xx or 425/429 (service warming / throttled)
+        if (res.status >= 500 || res.status === 425 || res.status === 429) {
+          lastErr = new Error(
+            `HTTP ${res.status} ${await res.text().catch(() => "")}`
+          );
+          // exponential backoff: 400ms, 900ms, 1600ms…
+          await sleep(400 + i * i * 500);
+          continue;
+        }
+        return res;
+      } catch (e) {
+        lastErr = e;
+        // network errors: also backoff & retry
+        await sleep(400 + i * i * 500);
+      }
+    }
+    throw lastErr ?? new Error("Request failed");
+  }
+
   async function searchImageFromUri(
     photoUri: string,
     params?: SearchImageParams
@@ -126,11 +158,15 @@ export function useMuseumApi() {
       type: "image/jpeg",
     } as any);
 
-    const res = await fetch(`${API_BASE_URL}/search-image?${qs.toString()}`, {
-      method: "POST",
-      headers: await authHeaders(undefined, { useAltHeader: true }),
-      body: form,
-    });
+    const res = await fetchWithRetry(
+      `${API_BASE_URL}/search-image?${qs.toString()}`,
+      {
+        method: "POST",
+        headers: await authHeaders(undefined, { useAltHeader: true }),
+        body: form,
+      },
+      3
+    );
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");

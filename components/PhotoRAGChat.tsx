@@ -74,6 +74,8 @@ const PhotoRAGChat = ({
   const [chatError, setChatError] = useState<string | null>(null);
   const [lastAnswer, setLastAnswer] = useState<string | null>(null);
 
+  const [retrying, setRetrying] = useState(false);
+
   // --- Dynamic sheet geometry based on whether conversation exists ---
   const hasConversation = messages.length > 0;
 
@@ -151,7 +153,12 @@ const PhotoRAGChat = ({
       setSearch(resp);
       setScanId(resp.scan_id ?? null);
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      // setError(e?.message ?? String(e));
+      const msg = e?.message ?? String(e);
+      if (/HTTP\s(5\d{2}|429|425)/.test(msg)) {
+        setRetrying(true); // “service warming up” hint
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -492,10 +499,40 @@ const PhotoRAGChat = ({
           ) : (
             <View style={styles.sheetInner}>
               {error && (
+                // <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
+                //   <Text style={{ color: "red", marginBottom: 6 }}>
+                //     Error: {error}
+                //   </Text>
+                //   <TouchableOpacity
+                //     onPress={runSearch}
+                //     style={styles.retryButton}
+                //   >
+                //     <Text style={styles.retryText}>Retry</Text>
+                //   </TouchableOpacity>
+                // </View>
                 <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
-                  <Text style={{ color: "red", marginBottom: 6 }}>
-                    Error: {error}
-                  </Text>
+                  <View
+                    style={{
+                      backgroundColor: "#FFF8E1",
+                      borderColor: "#FBC02D",
+                      borderWidth: 1,
+                      borderRadius: 10,
+                      padding: 10,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <Text style={{ fontWeight: "700", marginBottom: 4 }}>
+                      {retrying
+                        ? "Getting things ready…"
+                        : "Something went wrong"}
+                    </Text>
+                    <Text style={{ color: "#5F6368" }}>
+                      {retrying
+                        ? "server is waking up."
+                        : "Please try again. If the issue persists, retake the photo or check your connection."}
+                    </Text>
+                  </View>
+
                   <TouchableOpacity
                     onPress={runSearch}
                     style={styles.retryButton}
