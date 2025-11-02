@@ -1,4 +1,9 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
+subprojects { subproject ->
+  subproject.configurations.configureEach {
+    exclude group: "com.android.support"
+  }
+}
 
 buildscript {
   repositories {
