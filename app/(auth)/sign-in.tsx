@@ -87,7 +87,7 @@ export default function Page() {
           {loading ? (
             <ActivityIndicator />
           ) : (
-            <Ionicons name="logo-google" size={28} color="#f48f42ff" />
+            <Ionicons name="logo-google" size={28} color="#4285F4" />
           )}
         </View>
 

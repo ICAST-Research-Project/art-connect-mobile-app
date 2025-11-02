@@ -74,11 +74,11 @@ export default function Profile() {
 
             <View className="flex-row gap-3 mt-4">
               <TouchableOpacity
-                className="px-4 py-2 bg-red-500"
+                className="px-4 py-2 bg-red-500 rounded-lg"
                 activeOpacity={0.8}
                 onPress={() => signOut()}
               >
-                <Text className="text-white font-semibold">Log out</Text>
+                <Text className="text-white font-extrabold ">Log out</Text>
               </TouchableOpacity>
             </View>
           </View>

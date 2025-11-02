@@ -300,7 +300,7 @@ const PhotoRAGChat = ({
     : isMatch && topArtistName
     ? `This is an artwork by ${topArtistName}. What would you like to know more about it?`
     : search
-    ? "I couldn’t identify this artwork. Please try scanning once more or we may do have information on this."
+    ? "Please rescan. It may not be in our database."
     : "What would you like to know about it?";
 
   const showChatControls = isMatch && !loading && !error;
@@ -499,46 +499,31 @@ const PhotoRAGChat = ({
           ) : (
             <View style={styles.sheetInner}>
               {error && (
-                // <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
-                //   <Text style={{ color: "red", marginBottom: 6 }}>
-                //     Error: {error}
-                //   </Text>
-                //   <TouchableOpacity
-                //     onPress={runSearch}
-                //     style={styles.retryButton}
-                //   >
-                //     <Text style={styles.retryText}>Retry</Text>
-                //   </TouchableOpacity>
-                // </View>
-                <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
-                  <View
-                    style={{
-                      backgroundColor: "#FFF8E1",
-                      borderColor: "#FBC02D",
-                      borderWidth: 1,
-                      borderRadius: 10,
-                      padding: 10,
-                      marginBottom: 8,
-                    }}
-                  >
-                    <Text style={{ fontWeight: "700", marginBottom: 4 }}>
-                      {retrying
-                        ? "Getting things ready…"
-                        : "Something went wrong"}
-                    </Text>
-                    <Text style={{ color: "#5F6368" }}>
-                      {retrying
-                        ? "server is waking up."
-                        : "Please try again. If the issue persists, retake the photo or check your connection."}
-                    </Text>
-                  </View>
+                <View style={{ paddingHorizontal: 6, paddingVertical: 6 }}>
+                  <View style={styles.errorCard}>
+                    <View style={styles.errorRow}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={{ fontWeight: "700" }}>
+                          {retrying
+                            ? "Getting things ready…"
+                            : "Something went wrong"}
+                        </Text>
+                        <Text style={{ color: "#5F6368" }}>
+                          {retrying
+                            ? "server is waking up."
+                            : "Please try again."}
+                        </Text>
+                      </View>
 
-                  <TouchableOpacity
-                    onPress={runSearch}
-                    style={styles.retryButton}
-                  >
-                    <Text style={styles.retryText}>Retry</Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={runSearch}
+                        style={styles.retryChip}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.retryChipText}>Retry</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 </View>
               )}
 
@@ -1027,6 +1012,31 @@ const styles = StyleSheet.create({
     maxWidth: "85%",
     flexShrink: 1,
     alignItems: "flex-end",
+  },
+  errorCard: {
+    backgroundColor: "#FFF8E1",
+    borderColor: "#FBC02D",
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 8,
+  },
+
+  errorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  retryChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: "#1A73E8",
+    alignSelf: "flex-start",
+  },
+
+  retryChipText: {
+    color: "white",
+    fontWeight: "600",
   },
 });
 
