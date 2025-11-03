@@ -88,23 +88,11 @@ export type VoiceChatResponsePayload = {
 export function useMuseumApi() {
   const { getToken } = useAuth();
 
-  // async function authHeaders(base?: HeadersInit) {
-  //   const t = await getToken();
-  //   return { ...(base || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) };
-  // }
-  async function authHeaders(
-    base?: HeadersInit,
-    opts?: { useAltHeader?: boolean }
-  ) {
-    const t = await getToken();
+  // Unified auth header: always Authorization
+  async function authHeaders(base?: HeadersInit) {
+    const t = await getToken(); // no template
     const h: Record<string, string> = { ...(base as any) };
-    if (t) {
-      if (opts?.useAltHeader) {
-        h["X-Client-Auth"] = `Bearer ${t}`; // <<— use this
-      } else {
-        h["Authorization"] = `Bearer ${t}`; // default path (kept for local/dev)
-      }
-    }
+    if (t) h["Authorization"] = `Bearer ${t}`;
     return h;
   }
 
@@ -121,19 +109,16 @@ export function useMuseumApi() {
     for (let i = 0; i < tries; i++) {
       try {
         const res = await fetch(input, init);
-        // Retry on 5xx or 425/429 (service warming / throttled)
         if (res.status >= 500 || res.status === 425 || res.status === 429) {
           lastErr = new Error(
             `HTTP ${res.status} ${await res.text().catch(() => "")}`
           );
-          // exponential backoff: 400ms, 900ms, 1600ms…
           await sleep(400 + i * i * 500);
           continue;
         }
         return res;
       } catch (e) {
         lastErr = e;
-        // network errors: also backoff & retry
         await sleep(400 + i * i * 500);
       }
     }
@@ -162,7 +147,7 @@ export function useMuseumApi() {
       `${API_BASE_URL}/search-image?${qs.toString()}`,
       {
         method: "POST",
-        headers: await authHeaders(undefined, { useAltHeader: true }),
+        headers: await authHeaders(),
         body: form,
       },
       3
@@ -175,58 +160,12 @@ export function useMuseumApi() {
     return (await res.json()) as SearchFullResponse;
   }
 
-  /** Extract ?aid=... from a QR URL */
-  function parseAidFromUrl(input: string): string | null {
-    try {
-      const u = new URL(input);
-      return u.searchParams.get("aid");
-    } catch {
-      return null;
-    }
-  }
-
-  /** Search by QR (GET /search-qr?aid=...) */
-  async function searchQr(aid: string): Promise<SearchFullResponse> {
-    const url = `${API_BASE_URL}/search-qr?aid=${encodeURIComponent(aid)}`;
-    const res = await fetch(url, {
-      method: "GET",
-      headers: await authHeaders(undefined, { useAltHeader: true }), // same auth style as image search
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`QR search failed: ${res.status} ${text}`);
-    }
-    return (await res.json()) as SearchFullResponse;
-  }
-
-  /** Convenience: call search-qr using the full QR URL string */
-  async function searchQrFromUrl(qrUrl: string): Promise<SearchFullResponse> {
-    const aid = parseAidFromUrl(qrUrl);
-    if (!aid) throw new Error("QR URL missing 'aid' parameter");
-    return searchQr(aid);
-  }
-
-  /** (Optional) One-shot helper: QR → search → start chat */
-  async function startChatFromQrUrl(qrUrl: string, question?: string) {
-    const resp = await searchQrFromUrl(qrUrl);
-    const top = resp.results?.[0];
-    return postChat({
-      question: question ?? "Tell me about this artwork.",
-      scan_id: resp.scan_id!, // FastAPI returns one in both image + QR flows
-      artwork_id: top?.artwork_id?.toString(),
-      artist_id: top?.artist_id ?? undefined,
-      top_k: 6,
-      metric: "cosine",
-      sim_threshold: 0.3,
-    });
-  }
-
   async function postChat(
     payload: ChatRequestPayload
   ): Promise<ChatResponsePayload> {
     const res = await fetch(`${API_BASE_URL}/chat`, {
       method: "POST",
-      headers: await authHeaders({ "Content-Type": "application/json" }), // ← token here
+      headers: await authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ top_k: 6, metric: "cosine", ...payload }),
     });
     if (!res.ok) {
@@ -246,8 +185,8 @@ export function useMuseumApi() {
 
     const res = await fetch(`${API_BASE_URL}/voice/chat`, {
       method: "POST",
-      headers: await authHeaders(),
-      body: form,
+      headers: await authHeaders(), // Authorization
+      body: form, // do not set Content-Type for FormData
     });
 
     if (!res.ok) {
@@ -276,12 +215,12 @@ export function useMuseumApi() {
     form.append("audio_file", {
       uri: args.audioUri,
       name: `voice_${Date.now()}.m4a`,
-      type: "audio/mp4",
+      type: "audio/m4a", // correct for .m4a
     } as any);
 
     const res = await fetch(`${API_BASE_URL}/voice/chat`, {
       method: "POST",
-      headers: await authHeaders(),
+      headers: await authHeaders(), // Authorization
       body: form,
     });
 
@@ -292,13 +231,8 @@ export function useMuseumApi() {
     return (await res.json()) as VoiceChatResponsePayload;
   }
 
-  // return { searchImageFromUri, postChat, postVoiceChat, postVoiceChatFromFile };
-
   return {
     searchImageFromUri,
-    searchQr,
-    searchQrFromUrl,
-    startChatFromQrUrl,
     postChat,
     postVoiceChat,
     postVoiceChatFromFile,

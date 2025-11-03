@@ -584,7 +584,7 @@ const styles = StyleSheet.create({
   },
   listenHeader: { fontSize: 18, fontWeight: "700", color: "#202124" },
   subText: { fontSize: 12, color: "#5F6368", marginTop: 2 },
-
+     
   listenMic: {
     width: 50,
     height: 50,
