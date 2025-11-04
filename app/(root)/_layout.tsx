@@ -6,35 +6,35 @@ import { Image, View } from "react-native";
 export default function Layout() {
   const { isSignedIn } = useUser();
 
-  const TabIcon = ({ focused, icon }: any) => {
-    return (
-      <View
-        style={{
-          width: 64,
-          height: 64,
-          borderRadius: 32,
-          borderWidth: 3,
-          borderColor: focused ? "#1A73E8" : "#A8B5DB",
-          justifyContent: "center",
-          alignItems: "center",
-          backgroundColor: "#0F0D23",
-          marginTop: -20,
-        }}
-      >
-        <Image
-          source={icon}
-          style={{ width: 28, height: 28, tintColor: "white" }}
-        />
-      </View>
-    );
-  };
+  const TabIcon = ({ focused, icon }: any) => (
+    <View
+      style={{
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        borderWidth: 3,
+        borderColor: focused ? "#1A73E8" : "#A8B5DB",
+        justifyContent: "center",
+        alignItems: "center",
+        backgroundColor: "#0F0D23",
+        marginTop: -20,
+      }}
+    >
+      <Image
+        source={icon}
+        style={{ width: 28, height: 28, tintColor: "white" }}
+      />
+    </View>
+  );
 
   if (!isSignedIn) return <Redirect href={"/sign-in"} />;
 
   return (
     <Tabs
       screenOptions={({ route }) => {
-        const hideBar = route.name === "chat/[id]" || route.name === "camera";
+        // Hide the tab bar for ALL chat routes and the camera
+        const hideBar =
+          route.name === "camera" || route.name.startsWith("chat/");
         return {
           tabBarShowLabel: false,
           tabBarStyle: [
@@ -47,6 +47,7 @@ export default function Layout() {
             },
             hideBar && { display: "none" },
           ],
+          headerShown: false, // default off (you can still override per-screen)
         };
       }}
     >
@@ -58,7 +59,7 @@ export default function Layout() {
           title: "Scan & Chat",
           headerShown: false,
           tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} icon={icons.camera} title="Scan" />
+            <TabIcon focused={focused} icon={icons.camera} />
           ),
         }}
       />
@@ -74,12 +75,14 @@ export default function Layout() {
         name="collections/[collectionId]"
         options={{ href: null, headerShown: false }}
       />
+
       <Tabs.Screen
         name="chat/[id]"
-        options={{
-          href: null,
-          headerShown: false,
-        }}
+        options={{ href: null, headerShown: false }}
+      />
+      <Tabs.Screen
+        name="chat/from-image"
+        options={{ href: null, headerShown: false }}
       />
     </Tabs>
   );

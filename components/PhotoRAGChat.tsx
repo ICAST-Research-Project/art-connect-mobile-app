@@ -32,8 +32,12 @@ import {
 } from "react-native-safe-area-context";
 import VoiceRAGChat from "./VoiceRAGChat";
 
+type PhotoLike = Pick<CameraCapturedPicture, "uri" | "base64"> &
+  Partial<CameraCapturedPicture>;
+
 type Props = {
-  photo: CameraCapturedPicture;
+  // photo: CameraCapturedPicture;
+  photo: PhotoLike;
   onOpenCamera?: () => void;
   onMicPress?: () => void;
   onSendMessage?: (msg: string) => void;
@@ -78,17 +82,19 @@ const PhotoRAGChat = ({
 
   // --- Dynamic sheet geometry based on whether conversation exists ---
   const hasConversation = messages.length > 0;
+  const activeMode = hasConversation || voiceVisible;
+
+  const BASE_MIN = Math.floor(SCREEN_HEIGHT * 0.22);
+  const SHEET_MIN_INACTIVE = Math.max(200, BASE_MIN);
+  const SHEET_MIN_ACTIVE = Math.max(400, BASE_MIN);
 
   const sheetHeight = useMemo(() => {
-    return hasConversation
-      ? Math.max(400, Math.floor(SCREEN_HEIGHT * 0.22))
-      : Math.max(100, Math.floor(SCREEN_HEIGHT * 0.22));
-  }, [hasConversation]);
+    return activeMode ? SHEET_MIN_ACTIVE : SHEET_MIN_INACTIVE;
+  }, [activeMode]);
 
-  const peekVisible = useMemo(
-    () => (hasConversation ? 400 : 200),
-    [hasConversation]
-  );
+  const peekVisible = useMemo(() => {
+    return activeMode ? 400 : 200;
+  }, [activeMode]);
 
   const TRANSLATE_EXPANDED = 0;
   const TRANSLATE_COLLAPSED = sheetHeight - peekVisible;
@@ -96,7 +102,6 @@ const PhotoRAGChat = ({
     (TRANSLATE_COLLAPSED + TRANSLATE_EXPANDED) / 2
   );
 
-  // Animated position
   const translateY = useRef(new Animated.Value(TRANSLATE_COLLAPSED)).current;
   const dragStart = useRef(TRANSLATE_COLLAPSED);
 
@@ -188,6 +193,38 @@ const PhotoRAGChat = ({
     TRANSLATE_MID,
     TRANSLATE_COLLAPSED,
     translateY,
+  ]);
+
+  useEffect(() => {
+    // reset conversation state when a new image comes in
+    setMessages([]);
+    setText("");
+    setVoiceVisible(false);
+    setChatError(null);
+    setSearch(null);
+    setScanId(null);
+    setRetrying(false);
+  }, [photo?.uri]);
+
+  // Expand when voice UI opens; collapse appropriately when it closes
+  useEffect(() => {
+    const target = voiceVisible
+      ? TRANSLATE_EXPANDED
+      : hasConversation
+      ? TRANSLATE_MID
+      : TRANSLATE_COLLAPSED;
+
+    Animated.spring(translateY, {
+      toValue: target,
+      useNativeDriver: true,
+      bounciness: 6,
+    }).start(() => (dragStart.current = target));
+  }, [
+    voiceVisible,
+    hasConversation,
+    TRANSLATE_EXPANDED,
+    TRANSLATE_MID,
+    TRANSLATE_COLLAPSED,
   ]);
 
   useEffect(() => {
@@ -392,7 +429,7 @@ const PhotoRAGChat = ({
       setMessages((prev) =>
         prev.map((m) =>
           m.id === pendingMsg.id
-            ? { ...m, pending: false, text: "Sorry — I ran into a problem." }
+            ? { ...m, pending: false, text: "Sorry, I ran into a problem." }
             : m
         )
       );
@@ -437,7 +474,11 @@ const PhotoRAGChat = ({
       <View style={styles.photoLayer}>
         <Image
           style={styles.photo}
-          source={{ uri: "data:image/jpg;base64," + photo.base64 }}
+          source={{
+            uri: photo?.base64
+              ? `data:image/jpg;base64,${photo.base64}`
+              : photo?.uri ?? "",
+          }}
           resizeMode="cover"
         />
 

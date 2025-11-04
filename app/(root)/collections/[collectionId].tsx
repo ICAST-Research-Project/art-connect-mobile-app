@@ -104,8 +104,32 @@ export default function CollectionDetailPage() {
             showsVerticalScrollIndicator={false}
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}
+            // renderItem={({ item }) => (
+            //   <View className="w-[48%] mb-3">
+            //     <Image
+            //       source={{ uri: item.images?.[0] }}
+            //       className="w-full aspect-square"
+            //       resizeMode="cover"
+            //     />
+            //     <Text className="mt-2 text-sm font-medium" numberOfLines={2}>
+            //       {item.title}
+            //     </Text>
+            //   </View>
+            // )}
             renderItem={({ item }) => (
-              <View className="w-[48%] mb-3">
+              <TouchableOpacity
+                className="w-[48%] mb-3"
+                activeOpacity={0.9}
+                onPress={() => {
+                  router.push({
+                    pathname: "/chat/from-image",
+                    params: {
+                      imageUrl: item.images?.[0] ?? "",
+                      artworkId: String(item.id ?? ""), // optional, for future use
+                    },
+                  });
+                }}
+              >
                 <Image
                   source={{ uri: item.images?.[0] }}
                   className="w-full aspect-square"
@@ -114,7 +138,7 @@ export default function CollectionDetailPage() {
                 <Text className="mt-2 text-sm font-medium" numberOfLines={2}>
                   {item.title}
                 </Text>
-              </View>
+              </TouchableOpacity>
             )}
             ListEmptyComponent={
               <Text className="px-2 text-neutral-500">No artworks found.</Text>

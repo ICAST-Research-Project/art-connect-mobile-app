@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { AntDesign, MaterialCommunityIcons } from "@expo/vector-icons";
-import { Audio } from "expo-av";
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from "expo-av";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  PermissionsAndroid,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -35,7 +37,81 @@ const SILENCE_MS = 1400;
 const POLL_MS = 120;
 const MIN_SPEECH_MS = 450;
 const START_GRACE_MS = 400;
-const NO_SPEECH_TIMEOUT_MS = 5000; // stop if nothing for 5s
+const NO_SPEECH_TIMEOUT_MS = 5000;
+
+// ---- Interruption mode shims (SDK-proof) ----
+const IM_IOS =
+  (InterruptionModeIOS as any)?.DoNotMix ??
+  (Audio as any)?.INTERRUPTION_MODE_IOS_DO_NOT_MIX ??
+  null;
+
+const IM_ANDROID =
+  (InterruptionModeAndroid as any)?.DoNotMix ??
+  (Audio as any)?.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX ??
+  null;
+
+// ---- Small helpers ----
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function hardEnableAudio() {
+  try {
+    await Audio.setIsEnabledAsync(false);
+    await delay(80);
+    await Audio.setIsEnabledAsync(true);
+  } catch {}
+}
+
+function listeningModeOptions() {
+  const base: any = {
+    allowsRecordingIOS: true, // ignored on Android
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: false,
+    shouldDuckAndroid: true,
+    playThroughEarpieceAndroid: false,
+  };
+  if (IM_IOS != null) base.interruptionModeIOS = IM_IOS;
+  if (IM_ANDROID != null) base.interruptionModeAndroid = IM_ANDROID;
+  return base;
+}
+
+function playbackModeOptions() {
+  const base: any = {
+    allowsRecordingIOS: false,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: false,
+    shouldDuckAndroid: true,
+    playThroughEarpieceAndroid: false,
+  };
+  if (IM_IOS != null) base.interruptionModeIOS = IM_IOS;
+  if (IM_ANDROID != null) base.interruptionModeAndroid = IM_ANDROID;
+  return base;
+}
+
+async function setModeListening() {
+  try {
+    await Audio.setAudioModeAsync(listeningModeOptions());
+  } catch {}
+}
+
+async function setModePlayback() {
+  try {
+    await Audio.setAudioModeAsync(playbackModeOptions());
+  } catch {}
+}
+
+// ---- Android mic permission (explicit) ----
+async function ensureAndroidMicPermission(): Promise<boolean> {
+  if (Platform.OS !== "android") return true;
+  const granted = await PermissionsAndroid.check(
+    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+  );
+  if (granted) return true;
+
+  const res = await PermissionsAndroid.request(
+    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+  );
+  return res === PermissionsAndroid.RESULTS.GRANTED;
+}
 
 const VoiceRAGChat: React.FC<Props> = ({
   visible,
@@ -58,7 +134,6 @@ const VoiceRAGChat: React.FC<Props> = ({
   const [durationMs, setDurationMs] = useState(0);
 
   const recordingRef = useRef<Audio.Recording | null>(null);
-  const meterTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastVoiceTimeRef = useRef<number>(Date.now());
   const speechDetectedRef = useRef<boolean>(false);
   const speechStartRef = useRef<number>(0);
@@ -93,23 +168,10 @@ const VoiceRAGChat: React.FC<Props> = ({
     isActiveRef.current = visible;
   }, [visible]);
 
-  // const mmss = useMemo(() => {
-  //   const m = Math.floor(durationMs / 60000);
-  //   const s = Math.floor((durationMs % 60000) / 1000);
-  //   return `${m}:${s.toString().padStart(2, "0")}`;
-  // }, [durationMs]);
-
-  const clearMeterTimer = () => {
-    if (meterTimerRef.current != null) {
-      clearInterval(meterTimerRef.current);
-      meterTimerRef.current = null;
-    }
-  };
-
   const unloadPlayingSound = async () => {
     try {
       if (playingSoundRef.current) {
-        // @ts-ignore (type accepts function or null)
+        // @ts-ignore
         playingSoundRef.current.setOnPlaybackStatusUpdate &&
           playingSoundRef.current.setOnPlaybackStatusUpdate(null);
         await playingSoundRef.current.unloadAsync();
@@ -132,56 +194,41 @@ const VoiceRAGChat: React.FC<Props> = ({
     recordingRef.current = null;
   };
 
-  // Add these helpers near the top (below refs)
-  async function setModeListeningIOS() {
-    try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true, // critical: record mode
-        playsInSilentModeIOS: true, // respect silent switch
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false, // android-only, harmless on iOS
-      });
-    } catch {}
-  }
+  const safeResetAudioStack = async () => {
+    await unloadPlayingSound().catch(() => {});
+    await hardStopRecording().catch(() => {});
+    await delay(100);
+  };
 
-  async function setModePlaybackIOS() {
-    try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false, // critical: playback mode -> speaker
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-    } catch {}
-  }
-
-  // ---------- recording with metering ----------
+  // ---------- recording with status callback (no polling timer) ----------
   const beginRecording = async () => {
-    // Respect global active guard
     if (!isActiveRef.current) return;
 
-    try {
-      const perm = await Audio.requestPermissionsAsync();
-      if (!perm.granted) {
+    // Double-check both Expo + Android runtime permissions
+    const expoPerm = await Audio.getPermissionsAsync().catch(() => null);
+    if (expoPerm?.status !== "granted") {
+      const req = await Audio.requestPermissionsAsync().catch(() => null);
+      if (req?.status !== "granted") {
         Alert.alert("Microphone permission is required to record.");
         return;
       }
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+    }
+    const droidOk = await ensureAndroidMicPermission();
+    if (!droidOk) {
+      Alert.alert(
+        "Microphone disabled",
+        "Please enable microphone permission in Settings to use voice."
+      );
+      return;
+    }
 
-      if (!isActiveRef.current) return;
+    await safeResetAudioStack();
+    await hardEnableAudio();
+    await setModeListening();
+    await delay(80); // let AV session settle
 
-      await setModeListeningIOS();
-
-      const rec = new Audio.Recording();
-      await rec.prepareToRecordAsync({
+    try {
+      const recordingOptions: Audio.RecordingOptions = {
         android: {
           extension: ".m4a",
           outputFormat: Audio.AndroidOutputFormat.MPEG_4,
@@ -198,18 +245,82 @@ const VoiceRAGChat: React.FC<Props> = ({
           numberOfChannels: 1,
           bitRate: 128000,
         },
+        isMeteringEnabled: true, // metering may be undefined on some Androids; we handle that below
         web: {
           mimeType: "audio/webm;codecs=opus",
           bitsPerSecond: 128000,
         },
-        isMeteringEnabled: true,
-      });
+      };
 
-      if (!isActiveRef.current) return;
+      const onStatus = (st: Audio.RecordingStatus) => {
+        if (!isActiveRef.current) return;
 
-      recordingRef.current = rec;
-      await rec.startAsync();
+        if (typeof st.durationMillis === "number") {
+          setDurationMs(st.durationMillis);
+        }
 
+        // If paused/muted or not recording, drop the pulse UI.
+        if (!st.isRecording || muted) {
+          setVoiceActive(false);
+          stopPulse();
+          return;
+        }
+
+        // NOTE: On many Android devices, `metering` is undefined. Treat "undefined"
+        // as "possibly speaking" so the UI doesn't look dead; we still rely on
+        // the timeout to auto-stop if truly silent.
+        const level = (st as any).metering as number | undefined;
+        const now = Date.now();
+
+        if (typeof level === "number" ? level > SILENCE_DB : true) {
+          if (!speechDetectedRef.current) {
+            speechDetectedRef.current = true;
+            speechStartRef.current = now;
+          }
+          setVoiceActive(true);
+          lastVoiceTimeRef.current = now;
+          startPulse();
+        } else {
+          setVoiceActive(false);
+          stopPulse();
+
+          if (speechDetectedRef.current) {
+            const silentFor = now - lastVoiceTimeRef.current;
+            const voicedMs = lastVoiceTimeRef.current - speechStartRef.current;
+            const minSpeechSatisfied = voicedMs >= MIN_SPEECH_MS;
+
+            if (
+              silentFor > SILENCE_MS &&
+              minSpeechSatisfied &&
+              !stoppingRef.current
+            ) {
+              stoppingRef.current = true;
+              stopRecordingAndSubmit();
+            }
+          } else if (
+            now - lastVoiceTimeRef.current > NO_SPEECH_TIMEOUT_MS &&
+            !stoppingRef.current
+          ) {
+            stoppingRef.current = true;
+            stopRecordingAndSubmit();
+          }
+        }
+      };
+
+      const { recording } = await Audio.Recording.createAsync(
+        recordingOptions,
+        onStatus,
+        POLL_MS
+      );
+
+      if (!isActiveRef.current) {
+        await recording.stopAndUnloadAsync().catch(() => {});
+        return;
+      }
+
+      recordingRef.current = recording;
+
+      // reset UI/VAD state for a fresh turn
       setPhase("listening");
       setMuted(false);
       setDurationMs(0);
@@ -217,59 +328,8 @@ const VoiceRAGChat: React.FC<Props> = ({
       lastVoiceTimeRef.current = Date.now();
       speechDetectedRef.current = false;
       speechStartRef.current = 0;
-
-      clearMeterTimer();
-      meterTimerRef.current = setInterval(async () => {
-        if (!isActiveRef.current) return;
-        try {
-          const status = await rec.getStatusAsync();
-
-          if (typeof status.durationMillis === "number")
-            setDurationMs(status.durationMillis);
-
-          if (!status.isRecording || muted) {
-            setVoiceActive(false);
-            stopPulse();
-            return;
-          }
-
-          const now = Date.now();
-          const withinGrace = now - lastVoiceTimeRef.current < START_GRACE_MS;
-          const level = (status as any).metering as number | undefined;
-
-          if (typeof level === "number" && level > SILENCE_DB) {
-            if (!speechDetectedRef.current) {
-              speechDetectedRef.current = true;
-              speechStartRef.current = now;
-            }
-            setVoiceActive(true);
-            lastVoiceTimeRef.current = now;
-            startPulse();
-          } else {
-            setVoiceActive(false);
-            stopPulse();
-
-            if (!withinGrace && speechDetectedRef.current) {
-              const silentFor = now - lastVoiceTimeRef.current;
-              const voicedMs =
-                lastVoiceTimeRef.current - speechStartRef.current;
-              const minSpeechSatisfied = voicedMs >= MIN_SPEECH_MS;
-
-              if (
-                silentFor > SILENCE_MS &&
-                minSpeechSatisfied &&
-                !stoppingRef.current
-              ) {
-                stoppingRef.current = true;
-                clearMeterTimer();
-                await stopRecordingAndSubmit();
-              }
-            }
-          }
-        } catch {}
-      }, POLL_MS);
     } catch (e) {
-      console.warn("Audio record start error:", e);
+      console.warn("Recording.createAsync error:", e);
       Alert.alert("Could not start recording.");
     }
   };
@@ -286,14 +346,12 @@ const VoiceRAGChat: React.FC<Props> = ({
 
       const uri = rec?.getURI();
       recordingRef.current = null;
-      clearMeterTimer();
       stopPulse();
       setVoiceActive(false);
 
       if (uri && isActiveRef.current) {
         onRecorded?.(uri);
         await sendAndPlay(uri);
-      } else {
       }
     } catch (e) {
       console.warn("Stop failed:", e);
@@ -301,13 +359,6 @@ const VoiceRAGChat: React.FC<Props> = ({
       stoppingRef.current = false;
       setMuted(false);
     }
-  };
-
-  const resumeAutoListening = async () => {
-    if (!isActiveRef.current) return;
-    if (!visible) return;
-    if (recordingRef.current) return;
-    await beginRecording();
   };
 
   // ---------- send to API & play ----------
@@ -330,17 +381,15 @@ const VoiceRAGChat: React.FC<Props> = ({
 
       const transcript = resp.transcript ?? "";
       const answer = resp.answer_text ?? "";
-
-      if (onVoiceTurn && (transcript || answer)) {
+      if (onVoiceTurn && (transcript || answer))
         onVoiceTurn(transcript, answer);
-      } else if (answer && onAnswer) {
-        onAnswer(answer);
-      }
+      else if (answer && onAnswer) onAnswer(answer);
 
       if (resp.audio_b64) {
         setPhase("playing");
-        await setModePlaybackIOS();
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        await setModePlayback();
+        await delay(120);
+
         const sound = await playBase64Audio(
           resp.audio_b64,
           resp.mime ?? "audio/mpeg"
@@ -352,25 +401,29 @@ const VoiceRAGChat: React.FC<Props> = ({
             if (!s?.isLoaded) return;
             if (s.didJustFinish) {
               await unloadPlayingSound().catch(() => {});
-              // only auto-resume if still visible
-              await setModeListeningIOS();
-              if (isActiveRef.current) resumeAutoListening();
+              await hardEnableAudio();
+              await setModeListening();
+              if (isActiveRef.current) await beginRecording();
             }
           });
         } else {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          await setModeListeningIOS();
-          if (isActiveRef.current) resumeAutoListening();
+          await delay(2000);
+          await unloadPlayingSound().catch(() => {});
+          await hardEnableAudio();
+          await setModeListening();
+          if (isActiveRef.current) await beginRecording();
         }
       } else {
-        await setModeListeningIOS();
-        if (isActiveRef.current) resumeAutoListening();
+        await hardEnableAudio();
+        await setModeListening();
+        if (isActiveRef.current) await beginRecording();
       }
     } catch (e) {
       console.warn("Voice send/play error:", e);
       Alert.alert("Sorry — I couldn’t process your voice message.");
-      await setModeListeningIOS();
-      if (isActiveRef.current) resumeAutoListening();
+      await hardEnableAudio();
+      await setModeListening();
+      if (isActiveRef.current) await beginRecording();
     } finally {
       setSubmitting(false);
     }
@@ -380,67 +433,48 @@ const VoiceRAGChat: React.FC<Props> = ({
   useEffect(() => {
     isActiveRef.current = visible;
 
-    if (visible) {
+    const onOpen = async () => {
       setMuted(false);
       setVoiceActive(false);
       setDurationMs(0);
       stoppingRef.current = false;
-      beginRecording();
-    } else {
-      clearMeterTimer();
+
+      await safeResetAudioStack();
+      await hardEnableAudio();
+      await setModeListening();
+      await delay(80);
+      await beginRecording();
+    };
+
+    const onCloseAll = async () => {
       stopPulse();
       setMuted(false);
       setVoiceActive(false);
       setDurationMs(0);
       stoppingRef.current = false;
+      await safeResetAudioStack();
+      await setModePlayback(); // neutral, not recording
+    };
 
-      (async () => {
-        await hardStopRecording();
-        await unloadPlayingSound();
-
-        try {
-          await Audio.setAudioModeAsync({
-            allowsRecordingIOS: false,
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: false,
-            shouldDuckAndroid: true,
-            playThroughEarpieceAndroid: false,
-          });
-        } catch {}
-      })();
+    if (visible) {
+      onOpen();
+    } else {
+      onCloseAll();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  // single cleanup (avoid duplicate teardown)
   useEffect(() => {
     return () => {
       isActiveRef.current = false;
-      clearMeterTimer();
       (async () => {
-        await hardStopRecording();
-        await unloadPlayingSound();
+        await safeResetAudioStack();
       })();
     };
   }, []);
 
   // ---------- controls ----------
-  // const toggleMute = async () => {
-  //   if (phase !== "listening" || !recordingRef.current) return;
-  //   try {
-  //     if (!muted) {
-  //       await recordingRef.current.pauseAsync();
-  //       setMuted(true);
-  //       setVoiceActive(false);
-  //       stopPulse();
-  //     } else {
-  //       await recordingRef.current.startAsync();
-  //       setMuted(false);
-  //       lastVoiceTimeRef.current = Date.now();
-  //     }
-  //   } catch (e) {
-  //     console.warn("Mute toggle error:", e);
-  //   }
-  // };
   const toggleMute = async () => {
     if (phase !== "listening") return;
 
@@ -455,12 +489,11 @@ const VoiceRAGChat: React.FC<Props> = ({
         stopPulse();
       } else {
         try {
-          await setModeListeningIOS();
+          await setModeListening();
           await rec.startAsync();
         } catch (e) {
           console.warn("resume failed, rebuilding recorder:", e);
           await hardStopRecording();
-          clearMeterTimer();
           await beginRecording();
         }
         setMuted(false);
@@ -528,9 +561,6 @@ const VoiceRAGChat: React.FC<Props> = ({
         </Animated.View>
         <View style={{ marginLeft: 8 }}>
           <Text style={styles.listenHeaderBelow}>{headerText}</Text>
-          {/* {phase === "listening" ? (
-            <Text style={styles.subText}>{mmss}</Text>
-          ) : null} */}
         </View>
       </View>
 
@@ -584,7 +614,7 @@ const styles = StyleSheet.create({
   },
   listenHeader: { fontSize: 18, fontWeight: "700", color: "#202124" },
   subText: { fontSize: 12, color: "#5F6368", marginTop: 2 },
-     
+
   listenMic: {
     width: 50,
     height: 50,

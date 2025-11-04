@@ -25,11 +25,10 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
-      ],
+
+      "permissions": ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS", "CAMERA"],
+      "versionCode": 2,
+
       "package": "com.thenischal.mobile"
     },
     "web": {
@@ -54,12 +53,6 @@
           "cameraPermission": "Allow $(mobile) to access your camera",
           "microphonePermission": "Allow $(mobile) to access your microphone",
           "recordAudioAndroid": true
-        }
-      ],
-      [
-        "expo-audio",
-        {
-          "microphonePermission": "Allow $(mobile) to access your microphone."
         }
       ],
       "expo-av",
