@@ -123,8 +123,32 @@ export default function MuseumCollectionsPage() {
                   paddingVertical: 12,
                 }}
                 ItemSeparatorComponent={() => <View className="w-3" />}
+                // renderItem={({ item: art }) => (
+                //   <TouchableOpacity className="w-40">
+                //     <Image
+                //       source={{ uri: art.images?.[0] }}
+                //       className="w-40 h-40 rounded-lg"
+                //       resizeMode="cover"
+                //     />
+                //     <Text className="mt-2 text-sm font-medium number-of-lines-2">
+                //       {art.title}
+                //     </Text>
+                //   </TouchableOpacity>
+                // )}
                 renderItem={({ item: art }) => (
-                  <TouchableOpacity className="w-40">
+                  <TouchableOpacity
+                    className="w-40"
+                    activeOpacity={0.9}
+                    onPress={() => {
+                      router.push({
+                        pathname: "/chat/from-image",
+                        params: {
+                          imageUrl: art.images?.[0] ?? "",
+                          artworkId: String(art.id ?? ""),
+                        },
+                      });
+                    }}
+                  >
                     <Image
                       source={{ uri: art.images?.[0] }}
                       className="w-40 h-40 rounded-lg"

@@ -100,7 +100,7 @@ export default function Page() {
                       resizeMode="cover"
                     />
                     <View className="flex-1 justify-start">
-                      <Text className="font-semibold text-2xl mt-4 mb-1">
+                      <Text className="font-semibold text-xl mt-4 mb-1">
                         {item.museumName}
                       </Text>
                       <Text className="text-lg text-neutral-500 mt-4">
