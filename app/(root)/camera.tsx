@@ -74,7 +74,7 @@ export default function Camera() {
             router.back();
           }}
         >
-          <AntDesign name="close" size={32} color="white" />
+          <AntDesign name="close" size={20} color="white" />
         </TouchableOpacity>
 
         <View style={styles.buttonContainer}>
@@ -116,8 +116,8 @@ const styles = StyleSheet.create({
     top: 40,
     right: 20,
     backgroundColor: "rgba(0,0,0,0.5)",
-    padding: 6,
-    borderRadius: 20,
+    padding: 12,
+    borderRadius: 100,
     zIndex: 1,
   },
 });

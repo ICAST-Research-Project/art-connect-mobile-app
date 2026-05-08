@@ -688,7 +688,7 @@ const PhotoRAGChat = ({
             else router.replace("/camera");
           }}
         >
-          <AntDesign name="close" size={32} color="white" />
+          <AntDesign name="close" size={20} color="white" />
         </TouchableOpacity>
       </View>
 
@@ -1188,8 +1188,8 @@ const styles = StyleSheet.create({
     top: 40,
     right: 20,
     backgroundColor: "rgba(0,0,0,0.5)",
-    padding: 4,
-    borderRadius: 20,
+    padding: 12,
+    borderRadius: 100,
     zIndex: 20,
   },
   bubbleStrong: {
