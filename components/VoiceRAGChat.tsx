@@ -1,6 +1,19 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { AntDesign, MaterialCommunityIcons } from "@expo/vector-icons";
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from "expo-av";
+import {
+  AudioModule,
+  AudioQuality,
+  getRecordingPermissionsAsync,
+  IOSOutputFormat,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  setIsAudioActiveAsync,
+  type AudioStatus,
+  type AudioPlayer,
+  type AudioRecorder,
+  type RecorderState,
+  type RecordingOptions,
+} from "expo-audio";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -39,63 +52,46 @@ const MIN_SPEECH_MS = 450;
 const START_GRACE_MS = 400;
 const NO_SPEECH_TIMEOUT_MS = 5000;
 
-// ---- Interruption mode shims (SDK-proof) ----
-const IM_IOS =
-  (InterruptionModeIOS as any)?.DoNotMix ??
-  (Audio as any)?.INTERRUPTION_MODE_IOS_DO_NOT_MIX ??
-  null;
-
-const IM_ANDROID =
-  (InterruptionModeAndroid as any)?.DoNotMix ??
-  (Audio as any)?.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX ??
-  null;
-
 // ---- Small helpers ----
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function hardEnableAudio() {
   try {
-    await Audio.setIsEnabledAsync(false);
+    await setIsAudioActiveAsync(false);
     await delay(80);
-    await Audio.setIsEnabledAsync(true);
+    await setIsAudioActiveAsync(true);
   } catch {}
 }
 
 function listeningModeOptions() {
-  const base: any = {
-    allowsRecordingIOS: true, // ignored on Android
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: false,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
+  return {
+    allowsRecording: true,
+    playsInSilentMode: true,
+    shouldPlayInBackground: false,
+    shouldRouteThroughEarpiece: false,
+    interruptionMode: "doNotMix" as const,
   };
-  if (IM_IOS != null) base.interruptionModeIOS = IM_IOS;
-  if (IM_ANDROID != null) base.interruptionModeAndroid = IM_ANDROID;
-  return base;
 }
 
 function playbackModeOptions() {
-  const base: any = {
-    allowsRecordingIOS: false,
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: false,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
+  return {
+    allowsRecording: false,
+    playsInSilentMode: true,
+    shouldPlayInBackground: false,
+    shouldRouteThroughEarpiece: false,
+    interruptionMode: "duckOthers" as const,
   };
-  if (IM_IOS != null) base.interruptionModeIOS = IM_IOS;
-  if (IM_ANDROID != null) base.interruptionModeAndroid = IM_ANDROID;
-  return base;
 }
 
 async function setModeListening() {
   try {
-    await Audio.setAudioModeAsync(listeningModeOptions());
+    await setAudioModeAsync(listeningModeOptions());
   } catch {}
 }
 
 async function setModePlayback() {
   try {
-    await Audio.setAudioModeAsync(playbackModeOptions());
+    await setAudioModeAsync(playbackModeOptions());
   } catch {}
 }
 
@@ -133,12 +129,16 @@ const VoiceRAGChat: React.FC<Props> = ({
   const [voiceActive, setVoiceActive] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
 
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingRef = useRef<AudioRecorder | null>(null);
+  const recordingStatusIntervalRef = useRef<ReturnType<
+    typeof setInterval
+  > | null>(null);
+  const playbackSubscriptionRef = useRef<{ remove: () => void } | null>(null);
   const lastVoiceTimeRef = useRef<number>(Date.now());
   const speechDetectedRef = useRef<boolean>(false);
   const speechStartRef = useRef<number>(0);
   const stoppingRef = useRef<boolean>(false);
-  const playingSoundRef = useRef<Audio.Sound | null>(null);
+  const playingSoundRef = useRef<AudioPlayer | null>(null);
 
   const micPulse = useRef(new Animated.Value(1)).current;
   const startPulse = () => {
@@ -170,25 +170,29 @@ const VoiceRAGChat: React.FC<Props> = ({
 
   const unloadPlayingSound = async () => {
     try {
+      playbackSubscriptionRef.current?.remove();
+      playbackSubscriptionRef.current = null;
       if (playingSoundRef.current) {
-        // @ts-ignore
-        playingSoundRef.current.setOnPlaybackStatusUpdate &&
-          playingSoundRef.current.setOnPlaybackStatusUpdate(null);
-        await playingSoundRef.current.unloadAsync();
+        playingSoundRef.current.pause();
+        playingSoundRef.current.remove();
       }
     } catch {}
     playingSoundRef.current = null;
   };
 
+  const clearRecordingStatusInterval = () => {
+    if (recordingStatusIntervalRef.current) {
+      clearInterval(recordingStatusIntervalRef.current);
+      recordingStatusIntervalRef.current = null;
+    }
+  };
+
   const hardStopRecording = async () => {
     try {
+      clearRecordingStatusInterval();
       if (recordingRef.current) {
-        const status = await recordingRef.current
-          .getStatusAsync()
-          .catch(() => null);
-        if (status?.isRecording) {
-          await recordingRef.current.stopAndUnloadAsync();
-        }
+        if (recordingRef.current.isRecording) await recordingRef.current.stop();
+        (recordingRef.current as any).remove?.();
       }
     } catch {}
     recordingRef.current = null;
@@ -205,9 +209,9 @@ const VoiceRAGChat: React.FC<Props> = ({
     if (!isActiveRef.current) return;
 
     // Double-check both Expo + Android runtime permissions
-    const expoPerm = await Audio.getPermissionsAsync().catch(() => null);
+    const expoPerm = await getRecordingPermissionsAsync().catch(() => null);
     if (expoPerm?.status !== "granted") {
-      const req = await Audio.requestPermissionsAsync().catch(() => null);
+      const req = await requestRecordingPermissionsAsync().catch(() => null);
       if (req?.status !== "granted") {
         Alert.alert("Microphone permission is required to record.");
         return;
@@ -228,22 +232,23 @@ const VoiceRAGChat: React.FC<Props> = ({
     await delay(80); // let AV session settle
 
     try {
-      const recordingOptions: Audio.RecordingOptions = {
+      clearRecordingStatusInterval();
+      const recordingOptions: RecordingOptions = {
+        extension: ".m4a",
+        sampleRate: 44100,
+        numberOfChannels: 1,
+        bitRate: 128000,
         android: {
           extension: ".m4a",
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          outputFormat: "mpeg4",
+          audioEncoder: "aac",
           sampleRate: 44100,
-          numberOfChannels: 1,
-          bitRate: 128000,
         },
         ios: {
           extension: ".m4a",
-          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-          audioQuality: Audio.IOSAudioQuality.MAX,
+          outputFormat: IOSOutputFormat.MPEG4AAC,
+          audioQuality: AudioQuality.MAX,
           sampleRate: 44100,
-          numberOfChannels: 1,
-          bitRate: 128000,
         },
         isMeteringEnabled: true, // metering may be undefined on some Androids; we handle that below
         web: {
@@ -252,7 +257,7 @@ const VoiceRAGChat: React.FC<Props> = ({
         },
       };
 
-      const onStatus = (st: Audio.RecordingStatus) => {
+      const onStatus = (st: RecorderState) => {
         if (!isActiveRef.current) return;
 
         if (typeof st.durationMillis === "number") {
@@ -307,18 +312,24 @@ const VoiceRAGChat: React.FC<Props> = ({
         }
       };
 
-      const { recording } = await Audio.Recording.createAsync(
-        recordingOptions,
-        onStatus,
-        POLL_MS
-      );
+      const recording = new (AudioModule as any).AudioRecorder(
+        recordingOptions
+      ) as AudioRecorder;
+      await recording.prepareToRecordAsync();
+      recording.record();
 
       if (!isActiveRef.current) {
-        await recording.stopAndUnloadAsync().catch(() => {});
+        await recording.stop().catch(() => {});
+        (recording as any).remove?.();
         return;
       }
 
       recordingRef.current = recording;
+      recordingStatusIntervalRef.current = setInterval(() => {
+        const current = recordingRef.current;
+        if (!current) return;
+        onStatus(current.getStatus());
+      }, POLL_MS);
 
       // reset UI/VAD state for a fresh turn
       setPhase("listening");
@@ -329,7 +340,7 @@ const VoiceRAGChat: React.FC<Props> = ({
       speechDetectedRef.current = false;
       speechStartRef.current = 0;
     } catch (e) {
-      console.warn("Recording.createAsync error:", e);
+      console.warn("AudioRecorder error:", e);
       Alert.alert("Could not start recording.");
     }
   };
@@ -340,11 +351,13 @@ const VoiceRAGChat: React.FC<Props> = ({
 
       const rec = recordingRef.current;
       if (rec) {
-        const status = await rec.getStatusAsync().catch(() => null);
-        if (status?.isRecording) await rec.stopAndUnloadAsync();
+        const status = rec.getStatus();
+        if (status?.isRecording) await rec.stop();
       }
 
-      const uri = rec?.getURI();
+      clearRecordingStatusInterval();
+      const uri = rec?.uri ?? rec?.getStatus().url;
+      (rec as any)?.remove?.();
       recordingRef.current = null;
       stopPulse();
       setVoiceActive(false);
@@ -394,25 +407,17 @@ const VoiceRAGChat: React.FC<Props> = ({
           resp.audio_b64,
           resp.mime ?? "audio/mpeg"
         );
-        playingSoundRef.current = sound as Audio.Sound | null;
-
-        if (playingSoundRef.current?.setOnPlaybackStatusUpdate) {
-          playingSoundRef.current.setOnPlaybackStatusUpdate(async (s: any) => {
-            if (!s?.isLoaded) return;
-            if (s.didJustFinish) {
-              await unloadPlayingSound().catch(() => {});
-              await hardEnableAudio();
-              await setModeListening();
-              if (isActiveRef.current) await beginRecording();
-            }
-          });
-        } else {
-          await delay(2000);
-          await unloadPlayingSound().catch(() => {});
-          await hardEnableAudio();
-          await setModeListening();
-          if (isActiveRef.current) await beginRecording();
-        }
+        playingSoundRef.current = sound;
+        playbackSubscriptionRef.current = (sound as any).addListener(
+          "playbackStatusUpdate",
+          async (s: AudioStatus) => {
+            if (!s?.isLoaded || !s.didJustFinish) return;
+            await unloadPlayingSound().catch(() => {});
+            await hardEnableAudio();
+            await setModeListening();
+            if (isActiveRef.current) await beginRecording();
+          }
+        );
       } else {
         await hardEnableAudio();
         await setModeListening();
@@ -483,14 +488,14 @@ const VoiceRAGChat: React.FC<Props> = ({
 
     try {
       if (!muted) {
-        await rec.pauseAsync();
+        rec.pause();
         setMuted(true);
         setVoiceActive(false);
         stopPulse();
       } else {
         try {
           await setModeListening();
-          await rec.startAsync();
+          rec.record();
         } catch (e) {
           console.warn("resume failed, rebuilding recorder:", e);
           await hardStopRecording();

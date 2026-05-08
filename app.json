@@ -55,7 +55,6 @@
           "recordAudioAndroid": true
         }
       ],
-      "expo-av",
       "expo-secure-store",
       "expo-font",
       "expo-web-browser"

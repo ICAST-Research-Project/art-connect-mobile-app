@@ -1,4 +1,4 @@
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from "expo-av";
+import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { File, Paths } from "expo-file-system";
 import * as FSLegacy from "expo-file-system/legacy";
 
@@ -53,20 +53,16 @@ export async function playBase64Audio(b64: string, mime = "audio/mpeg") {
     wrote = true;
   }
 
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: false,
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: false,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
-    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+  await setAudioModeAsync({
+    allowsRecording: false,
+    playsInSilentMode: true,
+    shouldPlayInBackground: false,
+    shouldRouteThroughEarpiece: false,
+    interruptionMode: "duckOthers",
   });
 
-  const { sound } = await Audio.Sound.createAsync(
-    { uri },
-    { shouldPlay: true }
-  );
+  const sound = createAudioPlayer({ uri }, { updateInterval: 250 });
+  sound.play();
 
   return sound;
 }

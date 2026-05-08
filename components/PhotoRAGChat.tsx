@@ -14,7 +14,6 @@ import React, {
 import {
   ActivityIndicator,
   Animated,
-  Dimensions,
   Image,
   Keyboard,
   PanResponder,
@@ -24,6 +23,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import {
@@ -52,13 +52,24 @@ type ChatMessage = {
   channel?: "text" | "voice";
 };
 
-const { height: SCREEN_HEIGHT } = Dimensions.get("window");
-
 const SUGGESTIONS = [
   "What is the significance of this work?",
   "Materials & technique?",
   "Who is the artist?",
 ];
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
+
+const getTouchDistance = (touches: { pageX: number; pageY: number }[]) => {
+  if (touches.length < 2) return 0;
+  const [a, b] = touches;
+  return Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY);
+};
+
+const MIN_PHOTO_SCALE = 1;
+const MAX_PHOTO_SCALE = 4;
+const PHOTO_RESET_THRESHOLD = 0.04;
 
 const PhotoRAGChat = ({
   photo,
@@ -68,6 +79,7 @@ const PhotoRAGChat = ({
   onMicPress,
 }: Props) => {
   const insets = useSafeAreaInsets();
+  const { height: screenHeight, width: screenWidth } = useWindowDimensions();
   const openCamera = onOpenCamera ?? handleRetakePhoto;
 
   const [text, setText] = useState("");
@@ -79,22 +91,45 @@ const PhotoRAGChat = ({
   const [lastAnswer, setLastAnswer] = useState<string | null>(null);
 
   const [retrying, setRetrying] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState<SearchFullResponse | null>(null);
 
   // --- Dynamic sheet geometry based on whether conversation exists ---
   const hasConversation = messages.length > 0;
   const activeMode = hasConversation || voiceVisible;
+  const topResult = search?.results?.[0] ?? null;
+  const isMatch = !!search?.decision?.is_match;
+  const topArtistName = topResult?.artist_name ?? null;
+  const showChatControls = isMatch && !loading && !error && !voiceVisible;
 
-  const BASE_MIN = Math.floor(SCREEN_HEIGHT * 0.22);
-  const SHEET_MIN_INACTIVE = Math.max(200, BASE_MIN);
-  const SHEET_MIN_ACTIVE = Math.max(400, BASE_MIN);
+  const SHEET_MAX_HEIGHT = Math.floor(screenHeight * 0.8);
+  const BASE_MIN = Math.floor(screenHeight * 0.22);
+  const [footerH, setFooterH] = useState(0);
+  const [inactiveContentH, setInactiveContentH] = useState(0);
+  const footerOffset = showChatControls ? footerH : 0;
+  const sheetMaxHeight = Math.max(180, SHEET_MAX_HEIGHT - footerOffset);
 
   const sheetHeight = useMemo(() => {
-    return activeMode ? SHEET_MIN_ACTIVE : SHEET_MIN_INACTIVE;
-  }, [activeMode]);
+    if (activeMode) return sheetMaxHeight;
+
+    const fallbackInactiveHeight = Math.min(
+      Math.max(140, BASE_MIN),
+      sheetMaxHeight
+    );
+
+    return inactiveContentH
+      ? Math.min(Math.ceil(inactiveContentH), sheetMaxHeight)
+      : fallbackInactiveHeight;
+  }, [activeMode, BASE_MIN, inactiveContentH, sheetMaxHeight]);
 
   const peekVisible = useMemo(() => {
-    return activeMode ? 400 : 200;
-  }, [activeMode]);
+    if (!activeMode) return sheetHeight;
+
+    const activePeek = 120;
+
+    return Math.min(activePeek, sheetHeight);
+  }, [activeMode, sheetHeight]);
 
   const TRANSLATE_EXPANDED = 0;
   const TRANSLATE_COLLAPSED = sheetHeight - peekVisible;
@@ -117,23 +152,21 @@ const PhotoRAGChat = ({
       : kbHeight;
 
   useEffect(() => {
-    if (scrollViewRef.current) {
-      scrollViewRef.current.scrollToEnd({ animated: true });
-    }
-  }, [messages]);
+    const timeout = setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 80);
+
+    return () => clearTimeout(timeout);
+  }, [footerH, messages]);
 
   useEffect(() => {
-    const target = hasConversation ? TRANSLATE_MID : TRANSLATE_COLLAPSED;
+    const target = hasConversation ? TRANSLATE_EXPANDED : TRANSLATE_COLLAPSED;
     Animated.spring(translateY, {
       toValue: target,
       useNativeDriver: true,
       bounciness: 6,
     }).start(() => (dragStart.current = target));
-  }, [sheetHeight, peekVisible, hasConversation]);
-
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState<SearchFullResponse | null>(null);
+  }, [sheetHeight, peekVisible, hasConversation, TRANSLATE_EXPANDED]);
 
   const { searchImageFromUri, postChat, postVoiceChatFromFile } =
     useMuseumApi();
@@ -176,13 +209,13 @@ const PhotoRAGChat = ({
   useEffect(() => {
     if (search && !loading) {
       Animated.spring(translateY, {
-        toValue: hasConversation ? TRANSLATE_MID : TRANSLATE_COLLAPSED,
+        toValue: hasConversation ? TRANSLATE_EXPANDED : TRANSLATE_COLLAPSED,
         useNativeDriver: true,
         bounciness: 6,
       }).start(
         () =>
           (dragStart.current = hasConversation
-            ? TRANSLATE_MID
+            ? TRANSLATE_EXPANDED
             : TRANSLATE_COLLAPSED)
       );
     }
@@ -190,7 +223,7 @@ const PhotoRAGChat = ({
     search,
     loading,
     hasConversation,
-    TRANSLATE_MID,
+    TRANSLATE_EXPANDED,
     TRANSLATE_COLLAPSED,
     translateY,
   ]);
@@ -211,7 +244,7 @@ const PhotoRAGChat = ({
     const target = voiceVisible
       ? TRANSLATE_EXPANDED
       : hasConversation
-      ? TRANSLATE_MID
+      ? TRANSLATE_EXPANDED
       : TRANSLATE_COLLAPSED;
 
     Animated.spring(translateY, {
@@ -223,7 +256,6 @@ const PhotoRAGChat = ({
     voiceVisible,
     hasConversation,
     TRANSLATE_EXPANDED,
-    TRANSLATE_MID,
     TRANSLATE_COLLAPSED,
   ]);
 
@@ -246,7 +278,7 @@ const PhotoRAGChat = ({
       setKbHeight(0);
       setKeyboardHeight(0);
       const targetPosition = hasConversation
-        ? TRANSLATE_MID
+        ? TRANSLATE_EXPANDED
         : TRANSLATE_COLLAPSED;
       Animated.spring(translateY, {
         toValue: targetPosition,
@@ -323,12 +355,14 @@ const PhotoRAGChat = ({
           }).start(() => (dragStart.current = target));
         },
       }),
-    [translateY, kbVisible, TRANSLATE_COLLAPSED, TRANSLATE_MID]
+    [
+      translateY,
+      kbVisible,
+      TRANSLATE_EXPANDED,
+      TRANSLATE_COLLAPSED,
+      TRANSLATE_MID,
+    ]
   );
-
-  const topResult = search?.results?.[0] ?? null;
-  const isMatch = !!search?.decision?.is_match;
-  const topArtistName = topResult?.artist_name ?? null;
 
   const bubbleText = loading
     ? "Analyzing your photo…"
@@ -340,9 +374,6 @@ const PhotoRAGChat = ({
     ? "Please rescan. It may not be in our database."
     : "What would you like to know about it?";
 
-  const showChatControls = isMatch && !loading && !error;
-
-  const [footerH, setFooterH] = useState(0);
   const hasIntro = messages.length === 0 && showChatControls;
 
   const handleSend = async (msg?: string) => {
@@ -368,10 +399,10 @@ const PhotoRAGChat = ({
     setMessages((prev) => [...prev, userMsg, pendingMsg]);
 
     Animated.spring(translateY, {
-      toValue: TRANSLATE_MID,
+      toValue: TRANSLATE_EXPANDED,
       useNativeDriver: true,
       bounciness: 6,
-    }).start(() => (dragStart.current = TRANSLATE_MID));
+    }).start(() => (dragStart.current = TRANSLATE_EXPANDED));
 
     if (!isMatch || !topResult) {
       setMessages((prev) =>
@@ -469,11 +500,168 @@ const PhotoRAGChat = ({
     }
   };
 
+  const photoScale = useRef(new Animated.Value(1)).current;
+  const photoTranslateX = useRef(new Animated.Value(0)).current;
+  const photoTranslateY = useRef(new Animated.Value(0)).current;
+  const photoGesture = useRef({
+    scale: 1,
+    baseScale: 1,
+    translateX: 0,
+    translateY: 0,
+    baseTranslateX: 0,
+    baseTranslateY: 0,
+    pinchDistance: 0,
+    panX: 0,
+    panY: 0,
+  }).current;
+
+  const clampPhotoPan = useCallback(
+    (x: number, y: number, scale = photoGesture.scale) => {
+      if (scale <= 1) {
+        return { x: 0, y: 0 };
+      }
+
+      const maxX = (screenWidth * (scale - 1)) / 2;
+      const maxY = (screenHeight * (scale - 1)) / 2;
+
+      return {
+        x: clamp(x, -maxX, maxX),
+        y: clamp(y, -maxY, maxY),
+      };
+    },
+    [photoGesture, screenHeight, screenWidth]
+  );
+
+  const photoPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (evt, gestureState) => {
+          const touches = evt.nativeEvent.touches;
+          return (
+            touches.length >= 2 ||
+            (photoGesture.scale > 1.01 &&
+              Math.abs(gestureState.dx) + Math.abs(gestureState.dy) > 4)
+          );
+        },
+        onPanResponderGrant: (evt) => {
+          const touches = evt.nativeEvent.touches;
+          photoGesture.baseScale = photoGesture.scale;
+          photoGesture.baseTranslateX = photoGesture.translateX;
+          photoGesture.baseTranslateY = photoGesture.translateY;
+          photoGesture.pinchDistance = getTouchDistance(touches);
+          photoGesture.panX = touches[0]?.pageX ?? 0;
+          photoGesture.panY = touches[0]?.pageY ?? 0;
+        },
+        onPanResponderMove: (evt, gestureState) => {
+          const touches = evt.nativeEvent.touches;
+
+          if (touches.length >= 2) {
+            const distance = getTouchDistance(touches);
+            const pinchStart = photoGesture.pinchDistance || distance || 1;
+            const nextScale = clamp(
+              photoGesture.baseScale * (distance / pinchStart),
+              MIN_PHOTO_SCALE,
+              MAX_PHOTO_SCALE
+            );
+            const pan = clampPhotoPan(
+              photoGesture.baseTranslateX + gestureState.dx,
+              photoGesture.baseTranslateY + gestureState.dy,
+              nextScale
+            );
+
+            photoGesture.scale = nextScale;
+            photoGesture.translateX = pan.x;
+            photoGesture.translateY = pan.y;
+            photoScale.setValue(nextScale);
+            photoTranslateX.setValue(pan.x);
+            photoTranslateY.setValue(pan.y);
+            return;
+          }
+
+          if (photoGesture.scale <= 1.01) return;
+
+          const pan = clampPhotoPan(
+            photoGesture.baseTranslateX + gestureState.dx,
+            photoGesture.baseTranslateY + gestureState.dy
+          );
+          photoGesture.translateX = pan.x;
+          photoGesture.translateY = pan.y;
+          photoTranslateX.setValue(pan.x);
+          photoTranslateY.setValue(pan.y);
+        },
+        onPanResponderRelease: () => {
+          if (Math.abs(photoGesture.scale - 1) <= PHOTO_RESET_THRESHOLD) {
+            photoGesture.scale = 1;
+            photoGesture.translateX = 0;
+            photoGesture.translateY = 0;
+            Animated.parallel([
+              Animated.spring(photoScale, {
+                toValue: 1,
+                useNativeDriver: true,
+              }),
+              Animated.spring(photoTranslateX, {
+                toValue: 0,
+                useNativeDriver: true,
+              }),
+              Animated.spring(photoTranslateY, {
+                toValue: 0,
+                useNativeDriver: true,
+              }),
+            ]).start();
+            return;
+          }
+
+          const pan = clampPhotoPan(
+            photoGesture.translateX,
+            photoGesture.translateY
+          );
+          photoGesture.translateX = pan.x;
+          photoGesture.translateY = pan.y;
+          Animated.parallel([
+            Animated.spring(photoTranslateX, {
+              toValue: pan.x,
+              useNativeDriver: true,
+            }),
+            Animated.spring(photoTranslateY, {
+              toValue: pan.y,
+              useNativeDriver: true,
+            }),
+          ]).start();
+        },
+      }),
+    [
+      clampPhotoPan,
+      photoGesture,
+      photoScale,
+      photoTranslateX,
+      photoTranslateY,
+    ]
+  );
+
+  useEffect(() => {
+    photoGesture.scale = 1;
+    photoGesture.translateX = 0;
+    photoGesture.translateY = 0;
+    photoScale.setValue(1);
+    photoTranslateX.setValue(0);
+    photoTranslateY.setValue(0);
+  }, [photo?.uri, photoGesture, photoScale, photoTranslateX, photoTranslateY]);
+
   return (
     <SafeAreaView style={styles.root} edges={["left", "right"]}>
-      <View style={styles.photoLayer}>
-        <Image
-          style={styles.photo}
+      <View style={styles.photoLayer} {...photoPanResponder.panHandlers}>
+        <Animated.Image
+          style={[
+            styles.photo,
+            {
+              transform: [
+                { translateX: photoTranslateX },
+                { translateY: photoTranslateY },
+                { scale: photoScale },
+              ],
+            },
+          ]}
           source={{
             uri: photo?.base64
               ? `data:image/jpg;base64,${photo.base64}`
@@ -509,12 +697,18 @@ const PhotoRAGChat = ({
           styles.sheetContainer,
           {
             height: sheetHeight, // dynamic
-            bottom: sheetBottom,
+            bottom: sheetBottom + footerOffset,
             transform: [{ translateY }],
           },
         ]}
       >
-        <View style={{ flex: 1 }}>
+        <View
+          style={activeMode ? styles.sheetBodyActive : styles.sheetBodyInactive}
+          onLayout={(e) => {
+            if (activeMode) return;
+            setInactiveContentH(e.nativeEvent.layout.height);
+          }}
+        >
           <View
             {...panResponder.panHandlers}
             style={styles.handleArea}
@@ -538,7 +732,12 @@ const PhotoRAGChat = ({
               }}
             />
           ) : (
-            <View style={styles.sheetInner}>
+            <View
+              style={[
+                styles.sheetInner,
+                activeMode && styles.sheetInnerActive,
+              ]}
+            >
               {error && (
                 <View style={{ paddingHorizontal: 6, paddingVertical: 6 }}>
                   <View style={styles.errorCard}>
@@ -614,21 +813,26 @@ const PhotoRAGChat = ({
               {/* Messages list */}
               <ScrollView
                 ref={scrollViewRef}
-                style={{ flex: 1 }}
+                style={[
+                  styles.messagesScroll,
+                  activeMode && styles.messagesScrollActive,
+                ]}
                 contentContainerStyle={[
-                  { flexGrow: 1, paddingHorizontal: 8 },
+                  { paddingHorizontal: 8 },
+                  activeMode && { flexGrow: 1 },
                   hasIntro
                     ? {
-                        justifyContent: "flex-end",
-                        paddingBottom: Math.max(footerH - 6, 0),
+                        paddingBottom: 12,
                       }
                     : {
-                        paddingBottom: showChatControls
-                          ? footerH
-                          : Math.max(insets.bottom, 8),
+                        paddingBottom: 8,
                       },
                 ]}
+                onContentSizeChange={() => {
+                  scrollViewRef.current?.scrollToEnd({ animated: true });
+                }}
                 keyboardShouldPersistTaps="handled"
+                scrollEnabled={activeMode}
                 showsVerticalScrollIndicator={false}
               >
                 {messages.length === 0 && (
@@ -641,18 +845,22 @@ const PhotoRAGChat = ({
                       color="black"
                       style={{ marginTop: 2 }}
                     />
-                    <View style={styles.bubbleBot}>
-                      {isMatch && topArtistName ? (
-                        <Text style={styles.bubbleTextBot}>
-                          This is an artwork by{" "}
-                          <Text style={styles.bubbleStrong}>
-                            {topArtistName}
+                    <View style={styles.leftMsgContainer}>
+                      <View style={styles.bubbleBot}>
+                        {isMatch && topArtistName ? (
+                          <Text style={styles.bubbleTextBot}>
+                            This is an artwork by{" "}
+                            <Text style={styles.bubbleStrong}>
+                              {topArtistName}
+                            </Text>
+                            . What would you like to know more about it?
                           </Text>
-                          . What would you like to know more about it?
-                        </Text>
-                      ) : (
-                        <Text style={styles.bubbleTextBot}>{bubbleText}</Text>
-                      )}
+                        ) : (
+                          <Text style={styles.bubbleTextBot}>
+                            {bubbleText}
+                          </Text>
+                        )}
+                      </View>
                     </View>
                   </View>
                 )}
@@ -725,101 +933,93 @@ const PhotoRAGChat = ({
                   );
                 })}
               </ScrollView>
-
-              {/* Footer pinned to bottom (suggestions + input) */}
-              {showChatControls ? (
-                <View
-                  style={styles.footer}
-                  onLayout={(e) => setFooterH(e.nativeEvent.layout.height)}
-                >
-                  <ScrollView
-                    horizontal
-                    style={[
-                      styles.suggestionsScroll,
-                      hasIntro && { marginTop: 2 },
-                    ]}
-                    contentContainerStyle={styles.suggestionsRow}
-                    showsHorizontalScrollIndicator={false}
-                    keyboardShouldPersistTaps="handled"
-                    fadingEdgeLength={Platform.OS === "android" ? 30 : 0}
-                  >
-                    {SUGGESTIONS.map((s) => (
-                      <TouchableOpacity
-                        key={s}
-                        onPress={() => handleSend(s)}
-                        style={styles.suggestion}
-                        activeOpacity={0.85}
-                        disabled={loading}
-                      >
-                        <Text style={styles.suggestionText}>{s}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-
-                  <View
-                    style={[
-                      styles.inputRow,
-                      {
-                        paddingBottom: kbVisible
-                          ? 8
-                          : Math.max(insets.bottom, 8),
-                      },
-                    ]}
-                  >
-                    <TextInput
-                      placeholder="Ask anything"
-                      placeholderTextColor="#9AA0A6"
-                      value={text}
-                      onChangeText={setText}
-                      style={styles.input}
-                      returnKeyType="send"
-                      onSubmitEditing={() => handleSend()}
-                      editable={!loading}
-                      onFocus={() => {
-                        if (!kbVisible && messages.length > 0) {
-                          Animated.spring(translateY, {
-                            toValue: TRANSLATE_EXPANDED,
-                            useNativeDriver: true,
-                            bounciness: 6,
-                          }).start(
-                            () => (dragStart.current = TRANSLATE_EXPANDED)
-                          );
-                        }
-                        setTimeout(() => {
-                          scrollViewRef.current?.scrollToEnd({
-                            animated: true,
-                          });
-                        }, 100);
-                      }}
-                    />
-
-                    <TouchableOpacity
-                      onPress={handleMicPress}
-                      activeOpacity={0.8}
-                      style={[styles.iconButton, loading && { opacity: 0.5 }]}
-                      disabled={loading}
-                    >
-                      <MaterialCommunityIcons name="microphone" size={20} />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => handleSend()}
-                      activeOpacity={0.8}
-                      style={[
-                        styles.sendButton,
-                        (loading || chatLoading) && { opacity: 0.5 },
-                      ]}
-                      disabled={loading || chatLoading}
-                    >
-                      <AntDesign name="arrow-up" size={16} color="white" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : null}
             </View>
           )}
         </View>
       </Animated.View>
+
+      {showChatControls ? (
+        <View
+          style={[styles.footer, { bottom: sheetBottom }]}
+          onLayout={(e) => setFooterH(e.nativeEvent.layout.height)}
+        >
+          <ScrollView
+            horizontal
+            style={[styles.suggestionsScroll, hasIntro && { marginTop: 2 }]}
+            contentContainerStyle={styles.suggestionsRow}
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            fadingEdgeLength={Platform.OS === "android" ? 30 : 0}
+          >
+            {SUGGESTIONS.map((s) => (
+              <TouchableOpacity
+                key={s}
+                onPress={() => handleSend(s)}
+                style={styles.suggestion}
+                activeOpacity={0.85}
+                disabled={loading}
+              >
+                <Text style={styles.suggestionText}>{s}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          <View
+            style={[
+              styles.inputRow,
+              {
+                paddingBottom: kbVisible ? 8 : Math.max(insets.bottom, 8),
+              },
+            ]}
+          >
+            <TextInput
+              placeholder="Ask anything"
+              placeholderTextColor="#9AA0A6"
+              value={text}
+              onChangeText={setText}
+              style={styles.input}
+              returnKeyType="send"
+              onSubmitEditing={() => handleSend()}
+              editable={!loading}
+              onFocus={() => {
+                if (!kbVisible && messages.length > 0) {
+                  Animated.spring(translateY, {
+                    toValue: TRANSLATE_EXPANDED,
+                    useNativeDriver: true,
+                    bounciness: 6,
+                  }).start(() => (dragStart.current = TRANSLATE_EXPANDED));
+                }
+                setTimeout(() => {
+                  scrollViewRef.current?.scrollToEnd({
+                    animated: true,
+                  });
+                }, 100);
+              }}
+            />
+
+            <TouchableOpacity
+              onPress={handleMicPress}
+              activeOpacity={0.8}
+              style={[styles.iconButton, loading && { opacity: 0.5 }]}
+              disabled={loading}
+            >
+              <MaterialCommunityIcons name="microphone" size={20} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => handleSend()}
+              activeOpacity={0.8}
+              style={[
+                styles.sendButton,
+                (loading || chatLoading) && { opacity: 0.5 },
+              ]}
+              disabled={loading || chatLoading}
+            >
+              <AntDesign name="arrow-up" size={16} color="white" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 };
@@ -862,14 +1062,22 @@ const styles = StyleSheet.create({
   handleArea: { paddingTop: 10, paddingBottom: 12, alignItems: "center" },
   handle: { width: 44, height: 4, borderRadius: 2, backgroundColor: "#DADCE0" },
 
-  sheetInner: { flex: 1, paddingHorizontal: 12, paddingTop: 0 },
+  sheetBodyActive: { flex: 1, minHeight: 0 },
+  sheetBodyInactive: {},
+
+  sheetInner: { paddingHorizontal: 12, paddingTop: 0 },
+  sheetInnerActive: { flex: 1, minHeight: 0 },
+
+  messagesScroll: { minHeight: 0 },
+  messagesScrollActive: { flex: 1 },
 
   footer: {
     position: "absolute",
-    left: 12,
-    right: 12,
-    bottom: 0,
+    left: 0,
+    right: 0,
     backgroundColor: "white",
+    paddingHorizontal: 12,
+    zIndex: 7,
   },
 
   row: {
@@ -989,6 +1197,7 @@ const styles = StyleSheet.create({
     color: "#000",
   },
   rowLeft: {
+    width: "100%",
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 8,
